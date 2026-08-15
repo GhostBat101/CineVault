@@ -1,4 +1,7 @@
 pub mod schema;
+pub mod repository;
+
+pub use repository::*;
 
 use rusqlite::{Connection, Result};
 use std::path::Path;
@@ -24,5 +27,9 @@ impl DatabaseManager {
     fn run_migrations(&self) -> Result<()> {
         self.conn.execute_batch(schema::INITIAL_SCHEMA)?;
         Ok(())
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.conn
     }
 }
