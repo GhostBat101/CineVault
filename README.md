@@ -1,0 +1,32 @@
+# 🎬 CineVault
+
+> **AI-Powered Narrative & Media Tracker** — Merging relational story architecture with embedded local AI (< 2 GB VRAM) for cinephiles, screenwriters, and Hollywood directors.
+
+---
+
+## 🌟 Highlights
+
+- **🔒 100% Offline & Private**: Zero cloud API dependencies. All database queries and AI inferences run strictly locally on your machine.
+- **🧠 Embedded Local AI (< 2 GB VRAM)**: Powered by optimized GGUF Small Language Models (`Llama-3.2-1B-Instruct` & `Qwen2.5-1.5B-Instruct`) with token streaming.
+- **🎬 Dual Experience Modes**:
+  - **Cinephile Deck Mode**: Fast, aesthetic media tracking with blurred backdrops, 1-click IMDb import, and offline AI summaries.
+  - **Director's Suite Mode**: Complete pre-production suite featuring **Save the Cat! / Three-Act Beat Sheets**, **Character Relationship Tension Matrices**, **Cinematography & Audio Cue Boards**, and **AI Continuity Audits**.
+- **🌐 Resilient IMDb Ingestion**: Dual-tier scraper prioritizing embedded JSON-LD (`schema.org/Movie` & `TVSeries`) for zero-breakage metadata and high-res poster extraction.
+- **🎨 4 Luxury Dark Themes**: *Obsidian Dark*, *Crimson Noir*, *Midnight Slate*, and *Cyber Emerald*.
+- **📐 Windows 11 Snap Resilience**: Collapsible sidebar (240px $\leftrightarrow$ 64px icon rail) with hard minimum window boundaries (`480x580px`) and responsive layout adaptation.
+- **⚙️ 7-Tab Settings Suite**: Deep customization benchmarked against Linear, Raycast, and Discord with live search and auto-save.
+
+---
+
+## 📂 Documentation
+
+- 📄 [Product Requirements Document (PRD)](./docs/PRD.md)
+- 📄 [15-Phase Implementation Plan](./docs/IMPLEMENTATION_PLAN.md)
+- 📄 [Agentic Core Rules](./.agents/rules/cinevault_core_rules.md)
+- 📄 [Industry Standard Engineering Guidelines](./.agents/rules/industry_standards.md)
+
+---
+
+## 📄 License
+
+This project is open source and released under the [MIT License](./LICENSE), providing full creative freedom to use, modify, distribute, and fork.

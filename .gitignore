@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Rust / Cargo Build Artifacts
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Production / Vite Bundles
+dist/
+dist-ssr/
+*.local
+
+# Tauri Bundle & Binaries
+src-tauri/target/
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+
+# Local AI Models & Heavy Assets (Users download these locally)
+*.gguf
+*.bin
+*.onnx
+*.safetensors
+models/
+model-vault/
+
+# Local SQLite Database & WAL files (Kept local & private)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Local Cache & Temp Storage
+cache/
+temp/
+logs/
+*.log
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor & OS Artifacts
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Antigravity Scratch Directories
+.gemini/
+scratch/
