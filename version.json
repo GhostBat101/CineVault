@@ -1,6 +1,6 @@
 {
-  "version": "0.2.0",
-  "build": 11,
-  "lastUpdated": "2026-08-15T18:45:00Z",
-  "notes": "Phase 4 Complete: Hardware Telemetry Poller, Dynamic VRAM Budget Enforcer (< 2GB Cap), and Interactive React Telemetry HUD."
+  "version": "0.2.1",
+  "build": 12,
+  "lastUpdated": "2026-08-15T18:48:20Z",
+  "notes": "Fixed CI package version synchronization and enhanced GitHub Actions publishing pipeline."
 }

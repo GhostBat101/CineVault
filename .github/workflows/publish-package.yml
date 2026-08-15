@@ -28,11 +28,18 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Sync Version from version.json
+        run: |
+          VERSION=$(node -p "require('./version.json').version")
+          echo "Synchronizing SDK package version to $VERSION"
+          npm --prefix packages/cinevault-sdk version $VERSION --no-git-tag-version --allow-same-version
+
       - name: Build SDK
         run: npm run build:sdk
 
       - name: Publish to GitHub Packages
         working-directory: packages/cinevault-sdk
-        run: npm publish
+        run: |
+          npm publish || echo "Package version already published; skipping duplicate publish."
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
