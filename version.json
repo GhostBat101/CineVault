@@ -1,6 +1,6 @@
 {
-  "version": "0.1.9",
-  "build": 10,
-  "lastUpdated": "2026-08-15T18:43:40Z",
-  "notes": "Solidified Standalone Native Independence rule: Zero runtime dependencies on dev MCP or .agents tools for end-users."
+  "version": "0.2.0",
+  "build": 11,
+  "lastUpdated": "2026-08-15T18:45:00Z",
+  "notes": "Phase 4 Complete: Hardware Telemetry Poller, Dynamic VRAM Budget Enforcer (< 2GB Cap), and Interactive React Telemetry HUD."
 }

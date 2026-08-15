@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ThemeName } from "./types";
+import { TelemetryHUD } from "./components/telemetry/TelemetryHUD";
 
 export function App() {
   const [theme, setTheme] = useState<ThemeName>("theme-obsidian");
@@ -213,31 +214,8 @@ export function App() {
         </main>
       </div>
 
-      {/* Telemetry HUD Status Bar */}
-      <footer
-        style={{
-          height: "var(--hud-height)",
-          backgroundColor: "var(--bg-secondary)",
-          borderTop: "1px solid var(--border-subtle)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 16px",
-          fontSize: "11px",
-          fontFamily: "var(--font-mono)",
-          color: "var(--text-muted)",
-        }}
-      >
-        <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-          <span>CPU: 4.2%</span>
-          <span>RAM: 1,240 / 16,384 MB</span>
-          <span style={{ color: "var(--status-success)" }}>VRAM Budget: 1,120 / 2,048 MB (Safe)</span>
-        </div>
-        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-          <span>Mode: GPU Auto (28/28 Layers)</span>
-          <span style={{ color: "var(--status-success)" }}>● 100% Offline & Private</span>
-        </div>
-      </footer>
+      {/* Live Hardware Telemetry HUD */}
+      <TelemetryHUD />
     </div>
   );
 }
