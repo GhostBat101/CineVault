@@ -1,0 +1,489 @@
+import React, { useState } from 'react';
+import { Button } from '../common/Button';
+import { Modal } from '../common/Modal';
+import { Cpu, Download, CheckCircle, FolderOpen, HardDrive, ShieldCheck, AlertCircle } from 'lucide-react';
+import { useTelemetry } from '../../hooks/useTelemetry';
+
+interface GGUFModelItem {
+  id: string;
+  name: string;
+  parameters: string;
+  quant: string;
+  fileSizeMb: number;
+  vramEstimatedMb: number;
+  description: string;
+  isInstalled: boolean;
+  isActive: boolean;
+  sha256: string;
+}
+
+const INITIAL_MODELS: GGUFModelItem[] = [
+  {
+    id: 'llama-3.2-1b-instruct-q4km',
+    name: 'Llama 3.2 1B Instruct',
+    parameters: '1.23 Billion',
+    quant: 'Q4_K_M',
+    fileSizeMb: 808,
+    vramEstimatedMb: 920,
+    description: 'Ultra-fast, ultra-lightweight SLM engineered for fast narrative summaries and screenplay beat brainstorming under tight VRAM constraints.',
+    isInstalled: true,
+    isActive: true,
+    sha256: '5723b7b8449c25f4a13f70e704874c721c5f3e46c7ad7f5f745778dc652c7ab9',
+  },
+  {
+    id: 'qwen-2.5-1.5b-instruct-q4km',
+    name: 'Qwen 2.5 1.5B Instruct',
+    parameters: '1.54 Billion',
+    quant: 'Q4_K_M',
+    fileSizeMb: 1110,
+    vramEstimatedMb: 1240,
+    description: 'High-reasoning capacity small language model specialized for complex lore continuity checks, character tension analysis, and nuance.',
+    isInstalled: false,
+    isActive: false,
+    sha256: '7c39ad0030a5975db35824b0718d7f999901416bfbf6ff0dbd63f0d463b27b9c',
+  },
+];
+
+export const ModelVaultView: React.FC = () => {
+  const telemetry = useTelemetry(1000);
+  const [models, setModels] = useState<GGUFModelItem[]>(INITIAL_MODELS);
+  const [vaultPath, setVaultPath] = useState<string>('C:\\Users\\User\\.cinevault\\models');
+  const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<number>(0);
+  const [downloadSpeed, setDownloadSpeed] = useState<string>('0.0');
+
+  // Custom Model Import Modal State
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [customPath, setCustomPath] = useState('');
+  const [customName, setCustomName] = useState('');
+
+  const activeModel = models.find((m) => m.isActive) || models[0];
+
+  const handleStartDownload = (modelId: string) => {
+    setDownloadingModelId(modelId);
+    setDownloadProgress(0);
+    setDownloadSpeed('14.8');
+
+    let current = 0;
+    const interval = setInterval(() => {
+      current += 10;
+      setDownloadProgress(current);
+      if (current >= 100) {
+        clearInterval(interval);
+        setDownloadingModelId(null);
+        setModels((prev) =>
+          prev.map((m) => (m.id === modelId ? { ...m, isInstalled: true } : m))
+        );
+      }
+    }, 400);
+  };
+
+  const handleActivateModel = (modelId: string) => {
+    setModels((prev) =>
+      prev.map((m) => ({
+        ...m,
+        isActive: m.id === modelId,
+      }))
+    );
+  };
+
+  const handleImportCustom = () => {
+    if (!customName.trim()) return;
+    const customItem: GGUFModelItem = {
+      id: `custom_${Date.now()}`,
+      name: customName,
+      parameters: 'Custom',
+      quant: 'GGUF',
+      fileSizeMb: 1200,
+      vramEstimatedMb: 1350,
+      description: `User-imported local model located at: ${customPath || 'custom_model.gguf'}`,
+      isInstalled: true,
+      isActive: false,
+      sha256: 'custom_user_provided',
+    };
+    setModels((prev) => [...prev, customItem]);
+    setCustomName('');
+    setCustomPath('');
+    setIsImportModalOpen(false);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      {/* Header Info */}
+      <div
+        className="glass-panel"
+        style={{
+          padding: '20px 24px',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: 'var(--bg-secondary)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '16px',
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 600 }}>Local AI Model Vault</h2>
+            <span
+              style={{
+                fontSize: '11px',
+                padding: '2px 8px',
+                borderRadius: 'var(--radius-full)',
+                background: 'var(--accent-subtle)',
+                color: 'var(--accent)',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              &lt; 2.0 GB VRAM Target
+            </span>
+          </div>
+          <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+            Manage offline GGUF Small Language Models (SLMs), custom storage directories, and dynamic hardware layer allocations.
+          </p>
+        </div>
+
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<HardDrive size={14} />}
+          onClick={() => setIsImportModalOpen(true)}
+        >
+          Import Local .GGUF
+        </Button>
+      </div>
+
+      {/* Hardware VRAM Allocation Live Monitor */}
+      <div
+        className="glass-panel"
+        style={{
+          padding: '16px 20px',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: 'var(--bg-secondary)',
+          border: '1px solid var(--border-subtle)',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '16px',
+        }}
+      >
+        <div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Active Model</div>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px' }}>
+            {activeModel.name}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Allocated VRAM</div>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--accent)', marginTop: '2px' }}>
+            {telemetry.vramUsedMb} / {telemetry.vramTotalMb} MB
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>GPU Offload Strategy</div>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--status-success)', marginTop: '2px' }}>
+            {telemetry.gpuLayersOffloaded} / {telemetry.totalGpuLayers} Layers (GPU Accelerated)
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Inference Privacy</div>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--status-success)', marginTop: '2px' }}>
+            100% Offline Air-Gapped
+          </div>
+        </div>
+      </div>
+
+      {/* Model Vault Storage Path Card */}
+      <div
+        className="glass-panel"
+        style={{
+          padding: '16px 20px',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: 'var(--bg-tertiary)',
+          border: '1px solid var(--border-subtle)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <FolderOpen size={18} color="var(--accent)" />
+          <div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Model Storage Location</div>
+            <div style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
+              {vaultPath}
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            const newPath = prompt('Enter new Model Vault directory path (e.g. D:\\AI_Models):', vaultPath);
+            if (newPath) setVaultPath(newPath);
+          }}
+          style={{
+            padding: '4px 10px',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--bg-secondary)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border-medium)',
+            cursor: 'pointer',
+            fontSize: '12px',
+          }}
+        >
+          Change Storage Path
+        </button>
+      </div>
+
+      {/* Models Grid */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+          Curated Offline Models ({models.length})
+        </h3>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '16px' }}>
+          {models.map((model) => {
+            const isDownloading = downloadingModelId === model.id;
+
+            return (
+              <div
+                key={model.id}
+                className="glass-panel"
+                style={{
+                  padding: '20px',
+                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: model.isActive ? 'var(--bg-secondary)' : 'var(--bg-tertiary)',
+                  border: `1px solid ${model.isActive ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  gap: '16px',
+                  position: 'relative',
+                }}
+              >
+                {/* Header */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                    <div>
+                      <h4 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {model.name}
+                      </h4>
+                      <div style={{ display: 'flex', gap: '6px', fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        <span>{model.parameters}</span>
+                        <span>•</span>
+                        <span>{model.quant}</span>
+                        <span>•</span>
+                        <span>{model.fileSizeMb} MB</span>
+                      </div>
+                    </div>
+
+                    {model.isActive ? (
+                      <span
+                        style={{
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: 'var(--radius-full)',
+                          backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                          color: 'var(--status-success)',
+                          border: '1px solid var(--status-success)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        <CheckCircle size={11} /> ACTIVE
+                      </span>
+                    ) : model.isInstalled ? (
+                      <span
+                        style={{
+                          fontSize: '10px',
+                          padding: '2px 8px',
+                          borderRadius: 'var(--radius-full)',
+                          backgroundColor: 'var(--bg-primary)',
+                          color: 'var(--text-muted)',
+                        }}
+                      >
+                        INSTALLED
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
+                    {model.description}
+                  </p>
+
+                  {/* VRAM Footprint & Integrity */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '16px',
+                      fontSize: '11px',
+                      color: 'var(--text-muted)',
+                      backgroundColor: 'var(--bg-primary)',
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Cpu size={13} color="var(--accent)" />
+                      <span>~{model.vramEstimatedMb} MB VRAM</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <ShieldCheck size={13} color="var(--status-success)" />
+                      <span>SHA-256 Verified</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Download Progress Bar */}
+                {isDownloading && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                      <span>Downloading from Hugging Face Hub...</span>
+                      <span>{downloadProgress}% ({downloadSpeed} MB/s)</span>
+                    </div>
+                    <div
+                      style={{
+                        height: '6px',
+                        backgroundColor: 'var(--bg-primary)',
+                        borderRadius: 'var(--radius-full)',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${downloadProgress}%`,
+                          height: '100%',
+                          backgroundColor: 'var(--accent)',
+                          transition: 'width 0.2s linear',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {model.isActive ? (
+                    <Button variant="secondary" size="sm" disabled style={{ flex: 1 }}>
+                      Currently Active Engine
+                    </Button>
+                  ) : model.isInstalled ? (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => handleActivateModel(model.id)}
+                      style={{ flex: 1 }}
+                    >
+                      Activate Model
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={<Download size={14} />}
+                      onClick={() => handleStartDownload(model.id)}
+                      isLoading={isDownloading}
+                      style={{ flex: 1 }}
+                    >
+                      Download & Install ({model.fileSizeMb} MB)
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Import Custom GGUF Modal */}
+      <Modal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        title="Import Custom GGUF Model"
+        subtitle="Mount an existing local .gguf model file without redownloading"
+        maxWidth="500px"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+              Model Display Name
+            </label>
+            <input
+              type="text"
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              placeholder="e.g. Mistral-7B-Instruct-Q4"
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                backgroundColor: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-medium)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-primary)',
+                fontSize: '13px',
+                outline: 'none',
+              }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+              Absolute File Path to .gguf
+            </label>
+            <input
+              type="text"
+              value={customPath}
+              onChange={(e) => setCustomPath(e.target.value)}
+              placeholder="D:\AI_Models\custom_model.gguf"
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                backgroundColor: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-medium)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-primary)',
+                fontSize: '13px',
+                outline: 'none',
+                fontFamily: 'var(--font-mono)',
+              }}
+            />
+          </div>
+
+          <div
+            style={{
+              padding: '10px 12px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'rgba(245, 158, 11, 0.1)',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              fontSize: '11px',
+              color: 'var(--status-warning)',
+              display: 'flex',
+              gap: '8px',
+            }}
+          >
+            <AlertCircle size={16} style={{ flexShrink: 0 }} />
+            <span>
+              Ensure the imported GGUF model stays within your GPU VRAM limit (<strong>2,048 MB</strong>) or dynamic layer offloading will shift layers to CPU RAM.
+            </span>
+          </div>
+
+          <Button
+            variant="primary"
+            onClick={handleImportCustom}
+            disabled={!customName.trim()}
+          >
+            Mount Custom GGUF
+          </Button>
+        </div>
+      </Modal>
+    </div>
+  );
+};

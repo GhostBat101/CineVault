@@ -1,5 +1,8 @@
 # 🎬 CineVault
 
+> ⚠️ **Status: Active Development / Work In Progress**
+> CineVault is currently undergoing active foundational development and phase execution. Pre-release binaries and developer SDK packages are versioned and published incrementally.
+
 > **AI-Powered Narrative & Media Tracker** — Merging relational story architecture with embedded local AI (< 2 GB VRAM) for cinephiles, screenwriters, and Hollywood directors, alongside a reusable TypeScript SDK (`@ghostbat101/cinevault-sdk`) on GitHub Packages.
 
 ---

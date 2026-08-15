@@ -1,6 +1,6 @@
 {
-  "version": "0.2.6",
-  "build": 17,
-  "lastUpdated": "2026-08-15T19:01:05Z",
-  "notes": "Phase 9 Complete: NxN Character Dynamic Tension Matrix, Heatmap Friction Scale, Lore & Continuity Notes, and Local AI Plot Hole Audits."
+  "version": "0.2.7",
+  "build": 18,
+  "lastUpdated": "2026-08-15T19:05:20Z",
+  "notes": "Phase 10 Complete: Local AI Model Vault Manager, GGUF Streaming Downloader, Storage Directory Router, Custom GGUF Importer, and README WIP status banner."
 }

@@ -10,6 +10,7 @@ import { MediaGrid } from './components/deck/MediaGrid';
 import { IngestModal } from './components/deck/IngestModal';
 import { MediaDetailModal } from './components/deck/MediaDetailModal';
 import { DirectorSuite } from './components/director/DirectorSuite';
+import { ModelVaultView } from './components/vault/ModelVaultView';
 import { Media } from './types';
 
 export function App() {
@@ -104,12 +105,7 @@ export function App() {
               )}
 
               {activeTab === 'model-vault' && (
-                <div>
-                  <h1 style={{ fontSize: '22px', marginBottom: '4px' }}>Local AI Model Vault</h1>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-                    Manage installed GGUF models, directory storage routing, and hardware offload allocations.
-                  </p>
-                </div>
+                <ModelVaultView />
               )}
 
               {activeTab === 'settings' && (
