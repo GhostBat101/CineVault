@@ -1,6 +1,6 @@
 {
-  "version": "0.2.7",
-  "build": 18,
-  "lastUpdated": "2026-08-15T19:05:20Z",
-  "notes": "Phase 10 Complete: Local AI Model Vault Manager, GGUF Streaming Downloader, Storage Directory Router, Custom GGUF Importer, and README WIP status banner."
+  "version": "0.2.8",
+  "build": 19,
+  "lastUpdated": "2026-08-15T19:31:05Z",
+  "notes": "Phase 11 Complete: Linear-Style 7-Tab Settings & Deep Customization Workbench, Theme Selector, VRAM Guardrails, and Database Portability Tools."
 }

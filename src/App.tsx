@@ -11,6 +11,7 @@ import { IngestModal } from './components/deck/IngestModal';
 import { MediaDetailModal } from './components/deck/MediaDetailModal';
 import { DirectorSuite } from './components/director/DirectorSuite';
 import { ModelVaultView } from './components/vault/ModelVaultView';
+import { SettingsView } from './components/settings/SettingsView';
 import { Media } from './types';
 
 export function App() {
@@ -109,12 +110,10 @@ export function App() {
               )}
 
               {activeTab === 'settings' && (
-                <div>
-                  <h1 style={{ fontSize: '22px', marginBottom: '4px' }}>Settings & Preferences</h1>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-                    Linear-style 7-tab configuration for themes, scraper delay, database vacuuming, and telemetry.
-                  </p>
-                </div>
+                <SettingsView
+                  currentTheme={theme}
+                  onThemeChange={setTheme}
+                />
               )}
             </ErrorBoundary>
           </main>
