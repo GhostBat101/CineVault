@@ -14,12 +14,13 @@
   5. **Create GitHub Release**: Automatically create a new GitHub Release with `gh release create v<version> --title "..." --notes "..."`.
   6. **Attach Release Assets**: If the desktop application installer (`.exe` setup wizard via NSIS/WiX) is available or built, attach it directly to the release.
   7. **Publish Packages**: Ensure the GitHub Actions CI/CD pipeline triggers and publishes updated developer packages (`@ghostbat101/cinevault-sdk`) to GitHub Packages.
-- **Strict `.gitignore` Policy**: Never push build artifacts (`target/`, `dist/`, `node_modules/`), heavy GGUF AI models (`*.gguf`), local SQLite databases (`*.db`), local poster caches, `.agents/`, `docs/`, or environment secrets.
+- **Strict `.gitignore` Policy**: Never push build artifacts (`target/`, `dist/`, `node_modules/`), heavy GGUF AI models (`*.gguf`), local SQLite databases (`*.db`), local poster caches, `.agents/`, `docs/`, `mcp_config.json`, or environment secrets.
 
 ---
 
 ## 2. Architectural & Engineering Invariants
 - **100% Offline & Zero-Cloud**: All media data, relational lore, scraping caches, and AI models execute strictly locally.
+- **Standalone Native Independence**: The compiled desktop application (`.exe` setup wizard) is 100% self-contained in Rust + React/Webview. It NEVER requires or depends on dev tools, `.agents/`, Node.js runtime, or external MCP servers on the end-user's machine.
 - **Strict < 2.0 GB VRAM Limit**: Dynamic layer offloading to CPU/RAM to guarantee zero out-of-memory driver crashes.
 - **Dual Experience Mode**: Seamless toggle between *Cinephile Deck Mode* (casual media tracker) and *Director's Suite Mode* (beat sheets, tension matrices, cinematography cues, lore continuity audits).
 - **Windows 11 Snap & Collapsible Sidebar**: Hard minimum window boundary (`480x580px`), responsive collapsible sidebar (240px $\leftrightarrow$ 64px icon rail), and zero-breakage layout reflow across all snap layouts.

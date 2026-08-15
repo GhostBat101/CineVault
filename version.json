@@ -1,6 +1,6 @@
 {
-  "version": "0.1.8",
-  "build": 9,
-  "lastUpdated": "2026-08-15T18:41:30Z",
-  "notes": "Phase 3 Complete: Dual-Tier IMDb JSON-LD & DOM Scraper, Local Asset Caching Engine with SHA-256 Collision-Free Hashing."
+  "version": "0.1.9",
+  "build": 10,
+  "lastUpdated": "2026-08-15T18:43:40Z",
+  "notes": "Solidified Standalone Native Independence rule: Zero runtime dependencies on dev MCP or .agents tools for end-users."
 }
