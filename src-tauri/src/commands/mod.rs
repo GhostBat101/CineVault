@@ -1,5 +1,5 @@
 use crate::telemetry::hardware::TelemetryData;
-use crate::scraper::imdb::ScrapedMedia;
+use crate::scraper::imdb::{ScrapedMedia, ImdbScraper};
 use crate::ai::engine::{InferenceRequest, InferenceResponse};
 use crate::db::repository::{MediaRecord, FullDatabaseExport};
 
@@ -21,19 +21,7 @@ pub async fn get_telemetry() -> Result<TelemetryData, String> {
 
 #[tauri::command]
 pub async fn extract_imdb(imdb_url: String) -> Result<ScrapedMedia, String> {
-    Ok(ScrapedMedia {
-        imdb_id: "tt1375666".to_string(),
-        title: "Inception".to_string(),
-        original_title: Some("Inception".to_string()),
-        year: Some(2010),
-        runtime_minutes: Some(148),
-        imdb_rating: Some(8.8),
-        poster_url: Some("https://m.media-amazon.com/images/M/MV5BMjAxMzY3NjcxNF5BMl5BanBnXkFtZTcwNTI5OTM0Mw@@._V1_.jpg".to_string()),
-        synopsis: Some("A thief who steals corporate secrets through dream-sharing technology...".to_string()),
-        genres: vec!["Action".to_string(), "Sci-Fi".to_string(), "Thriller".to_string()],
-        directors: vec!["Christopher Nolan".to_string()],
-        cast_members: vec![],
-    })
+    ImdbScraper::scrape_url(&imdb_url).await
 }
 
 #[tauri::command]
@@ -58,8 +46,8 @@ pub async fn get_all_media() -> Result<Vec<MediaRecord>, String> {
 #[tauri::command]
 pub async fn export_database_json() -> Result<String, String> {
     let export = FullDatabaseExport {
-        version: "0.1.6".to_string(),
-        exported_at: "2026-08-15T18:38:00Z".to_string(),
+        version: "0.1.7".to_string(),
+        exported_at: "2026-08-15T18:41:00Z".to_string(),
         sha256_checksum: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
         media: vec![],
         characters: vec![],
