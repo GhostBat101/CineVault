@@ -9,7 +9,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { MediaGrid } from './components/deck/MediaGrid';
 import { IngestModal } from './components/deck/IngestModal';
 import { MediaDetailModal } from './components/deck/MediaDetailModal';
-import { BeatSheetView } from './components/director/BeatSheetView';
+import { DirectorSuite } from './components/director/DirectorSuite';
 import { Media } from './types';
 
 export function App() {
@@ -98,7 +98,7 @@ export function App() {
               )}
 
               {activeTab === 'director' && (
-                <BeatSheetView
+                <DirectorSuite
                   media={selectedMedia}
                 />
               )}

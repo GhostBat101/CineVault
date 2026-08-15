@@ -137,7 +137,7 @@ export interface LoreNote {
   mediaId: string;
   characterId?: string;
   arcId?: string;
-  category: 'worldbuilding' | 'magic_system' | 'faction' | 'theory' | 'continuity' | 'general';
+  category: string;
   title: string;
   contentMarkdown: string;
   tags: string[];
