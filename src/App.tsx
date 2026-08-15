@@ -9,6 +9,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { MediaGrid } from './components/deck/MediaGrid';
 import { IngestModal } from './components/deck/IngestModal';
 import { MediaDetailModal } from './components/deck/MediaDetailModal';
+import { BeatSheetView } from './components/director/BeatSheetView';
 import { Media } from './types';
 
 export function App() {
@@ -97,12 +98,9 @@ export function App() {
               )}
 
               {activeTab === 'director' && (
-                <div>
-                  <h1 style={{ fontSize: '22px', marginBottom: '4px' }}>Director's Pre-Production Suite</h1>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-                    {selectedMedia ? `Active Canvas: ${selectedMedia.title}` : 'Save the Cat! 15 Beats, Three-Act Breakdown, Dynamic Relationship Tension Matrix, and AI Continuity Audits.'}
-                  </p>
-                </div>
+                <BeatSheetView
+                  media={selectedMedia}
+                />
               )}
 
               {activeTab === 'model-vault' && (

@@ -59,6 +59,17 @@ export interface StoryArc {
   updatedAt: string;
 }
 
+export interface Beat {
+  id: string;
+  name: string;
+  act: string;
+  percentage: number;
+  order: number;
+  description: string;
+  content: string;
+  isCompleted: boolean;
+}
+
 export interface BeatItem {
   id: string;
   beatNumber: number;

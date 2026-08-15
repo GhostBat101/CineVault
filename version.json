@@ -1,6 +1,6 @@
 {
-  "version": "0.2.4",
-  "build": 15,
-  "lastUpdated": "2026-08-15T18:55:20Z",
-  "notes": "Phase 7 Complete: Responsive Cinephile Deck Grid, Dual Ingestion Modal (IMDb Scraper + Original Screenplay Canvas), and Rich Media Detail Modal with Local AI Synthesis."
+  "version": "0.2.5",
+  "build": 16,
+  "lastUpdated": "2026-08-15T18:58:30Z",
+  "notes": "Phase 8 Complete: Director's Suite Save the Cat! 15 Beat Sheet Engine, Act Timeline Filter, Runtime Page/Minute Calculator, and AI Beat Brainstorming."
 }
