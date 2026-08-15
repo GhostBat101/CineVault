@@ -1,11 +1,14 @@
 name: Publish SDK to GitHub Packages
 
 on:
-  push:
-    branches: [main]
   release:
-    types: [published, created]
+    types: [published]
   workflow_dispatch:
+
+# Ensure only one workflow runs at a time per ref to conserve Actions minutes
+concurrency:
+  group: publish-sdk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   publish-sdk:
@@ -18,15 +21,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js with Cache
         uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: 'https://npm.pkg.github.com'
           scope: '@ghostbat101'
+          cache: 'npm'
 
       - name: Install Dependencies
-        run: npm install
+        run: npm ci --prefer-offline
 
       - name: Sync Version from version.json
         run: |

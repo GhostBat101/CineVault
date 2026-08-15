@@ -1,6 +1,6 @@
 {
-  "version": "0.2.9",
-  "build": 20,
-  "lastUpdated": "2026-08-15T19:35:45Z",
-  "notes": "Applied Vercel React Best Practices, memoization guards, and design accessibility refinements across all components."
+  "version": "0.3.0",
+  "build": 21,
+  "lastUpdated": "2026-08-15T19:52:20Z",
+  "notes": "Optimized CI/CD workflow to trigger exclusively on published releases with npm caching."
 }
