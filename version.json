@@ -1,6 +1,6 @@
 {
-  "version": "0.2.3",
-  "build": 14,
-  "lastUpdated": "2026-08-15T18:52:45Z",
-  "notes": "Phase 6 Complete: Custom Window Chrome (Titlebar), Collapsible Navigation Sidebar (240px <-> 68px), and Pure CSS Shell."
+  "version": "0.2.4",
+  "build": 15,
+  "lastUpdated": "2026-08-15T18:55:20Z",
+  "notes": "Phase 7 Complete: Responsive Cinephile Deck Grid, Dual Ingestion Modal (IMDb Scraper + Original Screenplay Canvas), and Rich Media Detail Modal with Local AI Synthesis."
 }

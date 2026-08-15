@@ -6,18 +6,35 @@ import { Sidebar } from './components/layout/Sidebar';
 import { Navbar } from './components/layout/Navbar';
 import { TelemetryHUD } from './components/telemetry/TelemetryHUD';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
-import { Modal } from './components/common/Modal';
-import { Button } from './components/common/Button';
+import { MediaGrid } from './components/deck/MediaGrid';
+import { IngestModal } from './components/deck/IngestModal';
+import { MediaDetailModal } from './components/deck/MediaDetailModal';
+import { Media } from './types';
 
 export function App() {
   const { theme, setTheme } = useTheme('theme-obsidian');
-  const { mediaList } = useMediaLibrary();
+  const { mediaList, addMedia } = useMediaLibrary();
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'director' | 'model-vault' | 'settings'>('dashboard');
   const [activeMode, setActiveMode] = useState<'cinephile' | 'director'>('cinephile');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Selected media for modal inspection & director suite
+  const [selectedMedia, setSelectedMedia] = useState<Media | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
+
+  const handleOpenDetail = (media: Media) => {
+    setSelectedMedia(media);
+    setIsDetailModalOpen(true);
+  };
+
+  const handleOpenDirectorSuite = (media: Media) => {
+    setSelectedMedia(media);
+    setActiveTab('director');
+    setActiveMode('director');
+  };
 
   return (
     <div className="app-shell">
@@ -25,7 +42,7 @@ export function App() {
       <Titlebar
         theme={theme}
         onThemeChange={setTheme}
-        version="v0.2.2"
+        version="v0.2.3"
       />
 
       {/* 2. Main Shell Layout */}
@@ -59,7 +76,7 @@ export function App() {
             <ErrorBoundary fallbackTitle="View Failed to Render">
               {activeTab === 'dashboard' && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
                     <div>
                       <h1 style={{ fontSize: '22px', marginBottom: '4px' }}>Media & Narrative Library</h1>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
@@ -68,32 +85,14 @@ export function App() {
                     </div>
                   </div>
 
-                  {/* Empty state & Ingest card */}
-                  <div
-                    className="glass-panel"
-                    onClick={() => setIsIngestModalOpen(true)}
-                    style={{
-                      padding: '48px 24px',
-                      textAlign: 'center',
-                      border: '2px dashed var(--border-medium)',
-                      borderRadius: 'var(--radius-lg)',
-                      cursor: 'pointer',
-                      maxWidth: '480px',
-                      transition: 'all var(--transition-normal)',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--accent)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--border-medium)';
-                    }}
-                  >
-                    <div style={{ fontSize: '36px', marginBottom: '12px' }}>✨</div>
-                    <h3 style={{ fontSize: '16px', marginBottom: '6px' }}>+ Ingest New Narrative Entry</h3>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
-                      Extract rich metadata from an IMDb URL or start an original screenplay canvas.
-                    </p>
-                  </div>
+                  {/* Responsive Media Grid */}
+                  <MediaGrid
+                    mediaList={mediaList}
+                    onSelectMedia={handleOpenDetail}
+                    onOpenDirectorSuite={handleOpenDirectorSuite}
+                    onOpenIngest={() => setIsIngestModalOpen(true)}
+                    searchQuery={searchQuery}
+                  />
                 </div>
               )}
 
@@ -101,7 +100,7 @@ export function App() {
                 <div>
                   <h1 style={{ fontSize: '22px', marginBottom: '4px' }}>Director's Pre-Production Suite</h1>
                   <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-                    Save the Cat! 15 Beats, Three-Act Breakdown, Dynamic Relationship Tension Matrix, and AI Continuity Audits.
+                    {selectedMedia ? `Active Canvas: ${selectedMedia.title}` : 'Save the Cat! 15 Beats, Three-Act Breakdown, Dynamic Relationship Tension Matrix, and AI Continuity Audits.'}
                   </p>
                 </div>
               )}
@@ -128,38 +127,24 @@ export function App() {
         </div>
       </div>
 
-      {/* Ingestion Modal Placeholder */}
-      <Modal
+      {/* 3. Ingestion Modal */}
+      <IngestModal
         isOpen={isIngestModalOpen}
         onClose={() => setIsIngestModalOpen(false)}
-        title="Ingest Media & Narrative Entry"
-        subtitle="Extract metadata from IMDb or start an original narrative canvas"
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Enter an IMDb title URL (e.g. https://www.imdb.com/title/tt1375666/) to begin extraction.
-          </p>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <input
-              type="text"
-              placeholder="https://www.imdb.com/title/tt..."
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-medium)',
-                background: 'var(--bg-tertiary)',
-                color: 'var(--text-primary)',
-                outline: 'none',
-                fontSize: '13px',
-              }}
-            />
-            <Button variant="primary">Extract</Button>
-          </div>
-        </div>
-      </Modal>
+        onMediaSaved={(newMedia) => {
+          addMedia(newMedia);
+        }}
+      />
 
-      {/* 3. Real-Time Hardware Telemetry HUD Bar */}
+      {/* 4. Media Detail & AI Synthesis Modal */}
+      <MediaDetailModal
+        media={selectedMedia}
+        isOpen={isDetailModalOpen}
+        onClose={() => setIsDetailModalOpen(false)}
+        onOpenDirectorSuite={handleOpenDirectorSuite}
+      />
+
+      {/* 5. Real-Time Hardware Telemetry HUD Bar */}
       <TelemetryHUD />
     </div>
   );
