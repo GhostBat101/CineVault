@@ -1,6 +1,6 @@
 {
-  "version": "0.2.1",
-  "build": 12,
-  "lastUpdated": "2026-08-15T18:48:20Z",
-  "notes": "Fixed CI package version synchronization and enhanced GitHub Actions publishing pipeline."
+  "version": "0.2.2",
+  "build": 13,
+  "lastUpdated": "2026-08-15T18:50:30Z",
+  "notes": "Phase 5 Complete: Embedded Local AI Engine (< 2GB VRAM), Model Vault Manager, Hugging Face GGUF Downloader, and Prompt Builders."
 }
