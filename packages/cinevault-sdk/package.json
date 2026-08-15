@@ -1,0 +1,35 @@
+{
+  "name": "@ghostbat101/cinevault-sdk",
+  "version": "0.1.3",
+  "description": "CineVault Narrative Architecture & MCP Toolkit for Screenwriters and Developers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GhostBat101/CineVault.git",
+    "directory": "packages/cinevault-sdk"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "screenplay",
+    "beat-sheet",
+    "save-the-cat",
+    "narrative-design",
+    "character-matrix",
+    "story-architecture",
+    "mcp-server",
+    "cinevault"
+  ],
+  "author": "GhostBat101",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

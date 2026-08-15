@@ -1,6 +1,6 @@
 {
-  "version": "0.1.3",
-  "build": 4,
-  "lastUpdated": "2026-08-15T18:24:50Z",
-  "notes": "Untracked and ignored .agents directory from public git repository."
+  "version": "0.1.4",
+  "build": 5,
+  "lastUpdated": "2026-08-15T18:30:30Z",
+  "notes": "Scaffolded complete monorepo: React shell, Pure CSS design tokens, Tauri v2 Rust backend, and @ghostbat101/cinevault-sdk package."
 }
