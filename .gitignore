@@ -57,8 +57,11 @@ Thumbs.db
 *.swp
 *.swo
 
-# Documentation (Kept local/private)
+# Documentation & Agent Customizations (Kept local/private)
 docs/
+.agents/
+.agent/
+_agents/
 
 # Antigravity Scratch Directories
 .gemini/
