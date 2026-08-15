@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState, memo } from 'react';
 import { Beat } from '../../types';
 import { Sparkles, ChevronDown, ChevronUp, CheckCircle, Clock } from 'lucide-react';
 
@@ -9,7 +9,7 @@ interface BeatCardProps {
   onGenerateAISuggestion?: (beat: Beat) => void;
 }
 
-export const BeatCard: React.FC<BeatCardProps> = ({
+export const BeatCard = memo<BeatCardProps>(({
   beat,
   onUpdateBeat,
   totalRuntimeMinutes = 110,
@@ -127,6 +127,7 @@ export const BeatCard: React.FC<BeatCardProps> = ({
           </div>
 
           <button
+            aria-label={isExpanded ? 'Collapse scene editor' : 'Expand scene editor'}
             style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
           >
             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -196,4 +197,6 @@ export const BeatCard: React.FC<BeatCardProps> = ({
       )}
     </div>
   );
-};
+});
+
+BeatCard.displayName = 'BeatCard';

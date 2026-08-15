@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useTheme } from './hooks/useTheme';
 import { useMediaLibrary } from './hooks/useMediaLibrary';
 import { Titlebar } from './components/layout/Titlebar';
@@ -28,16 +28,16 @@ export function App() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
 
-  const handleOpenDetail = (media: Media) => {
+  const handleOpenDetail = useCallback((media: Media) => {
     setSelectedMedia(media);
     setIsDetailModalOpen(true);
-  };
+  }, []);
 
-  const handleOpenDirectorSuite = (media: Media) => {
+  const handleOpenDirectorSuite = useCallback((media: Media) => {
     setSelectedMedia(media);
     setActiveTab('director');
     setActiveMode('director');
-  };
+  }, []);
 
   return (
     <div className="app-shell">

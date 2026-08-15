@@ -1,4 +1,4 @@
-import React from 'react';
+import { memo } from 'react';
 import { Media } from '../../types';
 import { Star, Clock, Sparkles } from 'lucide-react';
 
@@ -8,7 +8,7 @@ interface MediaCardProps {
   onOpenDirectorSuite?: () => void;
 }
 
-export const MediaCard: React.FC<MediaCardProps> = ({
+export const MediaCard = memo<MediaCardProps>(({
   media,
   onClick,
   onOpenDirectorSuite,
@@ -24,30 +24,42 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   };
 
   return (
-    <div
+    <article
       onClick={onClick}
+      tabIndex={0}
+      role="button"
+      aria-label={`Open details for ${media.title}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className="glass-panel"
       style={{
         borderRadius: 'var(--radius-md)',
         overflow: 'hidden',
         cursor: 'pointer',
-        transition: 'transform var(--transition-fast), border-color var(--transition-fast)',
+        transition: 'transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast)',
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
         backgroundColor: 'var(--bg-secondary)',
         border: '1px solid var(--border-subtle)',
+        outline: 'none',
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.transform = 'translateY(-4px)';
         e.currentTarget.style.borderColor = 'var(--accent)';
+        e.currentTarget.style.boxShadow = '0 12px 24px -8px rgba(0, 0, 0, 0.5)';
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.transform = 'translateY(0)';
         e.currentTarget.style.borderColor = 'var(--border-subtle)';
+        e.currentTarget.style.boxShadow = 'none';
       }}
     >
-      {/* Poster Image Container */}
+      {/* Poster Container */}
       <div
         style={{
           width: '100%',
@@ -60,12 +72,13 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         {media.posterUrl ? (
           <img
             src={media.posterUrl}
-            alt={media.title}
+            alt={`${media.title} poster`}
             loading="lazy"
             style={{
               width: '100%',
               height: '100%',
               objectFit: 'cover',
+              transition: 'transform var(--transition-normal)',
             }}
           />
         ) : (
@@ -84,14 +97,14 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           </div>
         )}
 
-        {/* Rating Badge */}
+        {/* Rating Pill */}
         {media.imdbRating && (
           <div
             style={{
               position: 'absolute',
               top: '8px',
               right: '8px',
-              backgroundColor: 'rgba(0, 0, 0, 0.75)',
+              backgroundColor: 'rgba(9, 10, 15, 0.85)',
               backdropFilter: 'blur(8px)',
               padding: '3px 7px',
               borderRadius: 'var(--radius-xs)',
@@ -102,6 +115,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
               fontWeight: 700,
               color: '#fbbf24',
               fontFamily: 'var(--font-mono)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
             }}
           >
             <Star size={11} fill="#fbbf24" />
@@ -109,13 +123,13 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           </div>
         )}
 
-        {/* Status Indicator Chip */}
+        {/* Status Badge */}
         <div
           style={{
             position: 'absolute',
             bottom: '8px',
             left: '8px',
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            backgroundColor: 'rgba(9, 10, 15, 0.85)',
             backdropFilter: 'blur(8px)',
             padding: '2px 6px',
             borderRadius: 'var(--radius-xs)',
@@ -124,22 +138,25 @@ export const MediaCard: React.FC<MediaCardProps> = ({
             gap: '4px',
             fontSize: '10px',
             fontWeight: 600,
+            letterSpacing: '0.04em',
             textTransform: 'uppercase',
             color: getStatusColor(media.userStatus),
+            border: '1px solid rgba(255, 255, 255, 0.08)',
           }}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: getStatusColor(media.userStatus) }} />
+          <span style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: getStatusColor(media.userStatus) }} />
           <span>{media.userStatus.replace('_', ' ')}</span>
         </div>
       </div>
 
-      {/* Info Container */}
+      {/* Info Body */}
       <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, justifyContent: 'space-between' }}>
         <div>
           <h3
             style={{
               fontSize: '13px',
               fontWeight: 600,
+              letterSpacing: '-0.01em',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -171,35 +188,38 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           </div>
         </div>
 
-        {/* Quick Action Button */}
+        {/* Action Button */}
         {onOpenDirectorSuite && (
           <button
             onClick={(e) => {
               e.stopPropagation();
               onOpenDirectorSuite();
             }}
+            aria-label={`Open Director Suite for ${media.title}`}
             style={{
               marginTop: '6px',
-              padding: '4px 8px',
+              padding: '5px 8px',
               borderRadius: 'var(--radius-xs)',
               background: 'var(--accent-subtle)',
               color: 'var(--accent)',
               border: '1px solid var(--border-subtle)',
               cursor: 'pointer',
               fontSize: '11px',
-              fontWeight: 500,
+              fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '4px',
-              transition: 'background var(--transition-fast)',
+              gap: '5px',
+              transition: 'all var(--transition-fast)',
             }}
           >
             <Sparkles size={12} />
-            <span>Open in Director Suite</span>
+            <span>Director's Suite</span>
           </button>
         )}
       </div>
-    </div>
+    </article>
   );
-};
+});
+
+MediaCard.displayName = 'MediaCard';
