@@ -1,37 +1,52 @@
 # Product Requirements Document (PRD)
 ## Project Name: **CineVault (AI-Powered Narrative & Media Tracker)**
-**Document Version:** 2.2.0-PROD  
-**Target Release:** Desktop (Windows 64-bit Native / Cross-Platform Ready)  
-**Classification:** Enterprise Desktop Application  
+**Document Version:** 2.3.0-PROD  
+**Target Release:** Desktop (Windows 64-bit Native / Cross-Platform Ready) & Developer SDK (GitHub Packages)  
+**Classification:** Enterprise Desktop Application & Developer SDK  
 
 ---
 
 ## 1. Executive Summary & Vision
 
-**CineVault** is an offline-first, native desktop application that bridges the gap between **intuitive media tracking** (for casual movie buffs, anime enthusiasts, and novel readers) and **deep narrative architectural lore mapping** (for Hollywood directors, screenwriters, showrunners, and game narrative designers).
+**CineVault** is an offline-first, dual-target software ecosystem that merges **intuitive media cataloging** (for casual movie buffs, anime enthusiasts, and novel readers) with **deep narrative architectural lore mapping** (for Hollywood directors, screenwriters, showrunners, and game narrative designers), while simultaneously providing a **reusable Developer SDK (`@ghostbat101/cinevault-sdk`)** published to GitHub Packages.
 
 Powered by an embedded **Local AI Inference Engine (< 2 GB VRAM limit)** with zero cloud reliance, CineVault executes quantized Small Language Models (GGUF via `llama.cpp` Rust bindings) alongside a high-performance SQLite database. Users can effortlessly ingest films via IMDb, track intricate sub-plots, generate contextual AI narrative syntheses, map character relationship tension matrices, analyze story pacing beats, and detect lore contradictions without sending a single byte of private creative data to the internet.
 
 ---
 
-## 2. Target User Personas & Tiered Value Proposition
+## 2. Dual-Target Product & Distribution Ecosystem
 
 ```
-+---------------------------------------------------------------------------------------------------------+
-|                                    CINEVAULT USER SPECTRUM & VALUE                                      |
-+---------------------------------------------------------------------------------------------------------+
-|  [CASUAL CINEPHILE / ENTHUSIAST]              [PRO DIRECTOR / SCREENWRITER / SHOWRUNNER]               |
-|  - Instant 1-click IMDb Ingestion             - Beat Sheet Frameworks (Save the Cat, 3-Act, Harmon)     |
-|  - 4 Luxury Dark Themes & Blurred Posters     - Character Dynamic Relationship Tension Matrix           |
-|  - Offline AI Plot & Theme Summaries          - AI Lore Contradiction & Plot Hole Analysis (MCP)        |
-|  - Rating, Status & Genre Filtering           - Scene-by-Scene Moodboards, Color Palettes & Audio Cues   |
-|  - Portable JSON Library Backup               - Exportable "Director's Pitch Bible" & Screenplay Bibles |
-+---------------------------------------------------------------------------------------------------------+
++─────────────────────────────────────────────────────────────────────────────────────────────────────────+
+|                                    CINEVAULT DUAL-TARGET ECOSYSTEM                                      |
++─────────────────────────────────────────────────────────────────────────────────────────────────────────+
+|  🚀 TARGET A: DESKTOP APPLICATION (GitHub Releases) │  📦 TARGET B: DEVELOPER SDK (GitHub Packages)     |
+|  - Windows Setup Wizard Installer (`.exe`)          │  - npm Package: `@ghostbat101/cinevault-sdk`       |
+|  - For Casual Cinephiles & Hollywood Directors      │  - For Writers, Tool Builders & AI Researchers     |
+|  - Cinephile Deck Mode <---> Director's Suite Mode  │  - Reusable Beat Sheets, Tension Matrix & MCP Tools|
+|  - 4 Luxury Dark Themes, Telemetry HUD, Local SLM   │  - Full TypeScript Types (`.d.ts`) & IntelliSense  |
++─────────────────────────────────────────────────────┴───────────────────────────────────────────────────+
 ```
 
 ---
 
-## 3. Window System, Collapsible Sidebar & Windows 11 Snap Layouts Architecture
+## 3. Target User Personas & Tiered Value Proposition
+
+### Persona A: "The Cinephile & Casual Collector" (Alex, 26)
+- **Need:** An ultra-fast, aesthetic desktop vault to catalog movies, series, and anime with rich posters, ratings, and instant AI summaries of confusing endings without subscription fees or telemetry tracking.
+- **Key Features:** Clean card grid, 1-click IMDb import, 4 dark themes, quick status filters, offline AI plot recaps, and zero-latency desktop search.
+
+### Persona B: "The Hollywood Director & Screenwriter" (Elena, 44)
+- **Need:** A unified pre-production workspace to architect multi-character cinematic universes, trace character arc motivations across sequels, structure scene beats (Three-Act, Dan Harmon Story Circle, Save the Cat), and verify story continuity.
+- **Key Features:** Character Relationship Matrix, Story Beat Breakdown, AI Contradiction Engine (Sequential Thinking MCP), Color Palette / Cinematography Cue tracking, and exportable Pitch Bibles.
+
+### Persona C: "The Third-Party Developer & Extension Author" (Marcus, 31)
+- **Need:** A standardized, strongly-typed JavaScript/TypeScript library to programmatically parse screenplays, calculate character tension scores, or integrate CineVault databases into Obsidian, Notion, or custom web apps.
+- **Key Features:** `npm install @ghostbat101/cinevault-sdk`, zero external runtime dependencies, full `.d.ts` type autocompletion, and pre-built MCP server adapters.
+
+---
+
+## 4. Window System, Collapsible Sidebar & Windows 11 Snap Layouts Architecture
 
 ```
 +─────────────────────────────────────────────────────────────────────────────────────────────────────────+
@@ -43,13 +58,13 @@ Powered by an embedded **Local AI Inference Engine (< 2 GB VRAM limit)** with ze
 +─────────────────────────────────────────────────────────────────────────────────────────────────────────+
 ```
 
-### 3.1 Window Dimensions & Constraints
+### 4.1 Window Dimensions & Constraints
 - **Default Resolution**: $1280 \times 820$ px (centered on primary display).
 - **Minimum Window Constraint (`min_width`, `min_height`)**: Hard-bounded at **$480 \times 580$ px** via Tauri window configuration. The window cannot be resized smaller than this threshold, preventing layout destruction.
 - **Maximum Resolution**: Unrestricted; supports ultra-wide $21:9$ / $32:9$ and 4K displays with responsive auto-fill grids.
 - **Windows 11 Snap Layouts Native Support**: Full integration with the Windows DWM (Desktop Window Manager) Snap Layouts menu on titlebar maximize/restore button hover.
 
-### 3.2 Collapsible Sidebar Navigation
+### 4.2 Collapsible Sidebar Navigation
 - **Expanded State (240px width)**: Shows section icons, full descriptive labels, active pill indicator, and shortcut hints (`Ctrl + 1`, `Ctrl + 2`, etc.).
 - **Collapsed Icon-Rail State (64px width)**: Compact icon-only view with interactive hover flyouts / tooltips for high-density workspaces.
 - **Manual Toggle**: One-click collapse button (`⮜` / `⮞`) on the sidebar footer and keyboard shortcut (`Ctrl + B`).
@@ -58,7 +73,7 @@ Powered by an embedded **Local AI Inference Engine (< 2 GB VRAM limit)** with ze
 
 ---
 
-## 4. Comprehensive Feature Matrix
+## 5. Comprehensive Feature Matrix
 
 ### Category 1: Media Ingestion & Data Cataloging
 - **ING-01**: **Resilient IMDb Scraping** (JSON-LD `schema.org/Movie` & `TVSeries` primary + DOM fallback).
@@ -90,9 +105,15 @@ Powered by an embedded **Local AI Inference Engine (< 2 GB VRAM limit)** with ze
 - **LORE-03**: **Chronological Timeline Sequencer** (Multi-track timeline with in-universe timestamps).
 - **LORE-04**: **Rich Markdown Lore Notes** (Split-pane Markdown editor with `[[Wikilinks]]` and category tagging).
 
+### Category 5: Developer SDK & GitHub Packages Ecosystem (`PKG`)
+- **PKG-01**: **`@ghostbat101/cinevault-sdk` npm Package**: Reusable TypeScript library published to GitHub Packages with full typing and zero-dependency core.
+- **PKG-02**: **Beat Sheet & Narrative Mathematical Engine**: Programmatic classes to construct, validate, and serialize Save the Cat / Three-Act beat sheets and timeline chronological ordering.
+- **PKG-03**: **Character Tension Graph Algorithm**: Graph-theory based calculation of character conflict paths and relationship density.
+- **PKG-04**: **MCP Protocol Adapter**: Ready-to-use Model Context Protocol server exposing CineVault relational schemas to external AI agents (Claude, Cursor, Antigravity).
+
 ---
 
-## 5. Enterprise Settings & Preferences Architecture (7-Tab Suite)
+## 6. Enterprise Settings & Preferences Architecture (7-Tab Suite)
 
 To match industry benchmarks like Linear, Raycast, and Discord, CineVault includes an integrated **2-Column Settings Suite** with live search, instant auto-save, and keyboard shortcuts (`Ctrl + ,` / `Esc`).
 

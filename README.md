@@ -1,6 +1,6 @@
 # 🎬 CineVault
 
-> **AI-Powered Narrative & Media Tracker** — Merging relational story architecture with embedded local AI (< 2 GB VRAM) for cinephiles, screenwriters, and Hollywood directors.
+> **AI-Powered Narrative & Media Tracker** — Merging relational story architecture with embedded local AI (< 2 GB VRAM) for cinephiles, screenwriters, and Hollywood directors, alongside a reusable TypeScript SDK (`@ghostbat101/cinevault-sdk`) on GitHub Packages.
 
 ---
 
@@ -11,6 +11,7 @@
 - **🎬 Dual Experience Modes**:
   - **Cinephile Deck Mode**: Fast, aesthetic media tracking with blurred backdrops, 1-click IMDb import, and offline AI summaries.
   - **Director's Suite Mode**: Complete pre-production suite featuring **Save the Cat! / Three-Act Beat Sheets**, **Character Relationship Tension Matrices**, **Cinematography & Audio Cue Boards**, and **AI Continuity Audits**.
+- **📦 Developer SDK (`@ghostbat101/cinevault-sdk`)**: Published to GitHub Packages; includes TypeScript beat sheet algorithms, character tension graphs, and Model Context Protocol (MCP) tools for external apps.
 - **🌐 Resilient IMDb Ingestion**: Dual-tier scraper prioritizing embedded JSON-LD (`schema.org/Movie` & `TVSeries`) for zero-breakage metadata and high-res poster extraction.
 - **🎨 4 Luxury Dark Themes**: *Obsidian Dark*, *Crimson Noir*, *Midnight Slate*, and *Cyber Emerald*.
 - **📐 Windows 11 Snap Resilience**: Collapsible sidebar (240px $\leftrightarrow$ 64px icon rail) with hard minimum window boundaries (`480x580px`) and responsive layout adaptation.

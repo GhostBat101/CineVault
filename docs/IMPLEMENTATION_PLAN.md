@@ -1,20 +1,15 @@
 # Implementation Plan: CineVault (AI-Powered Narrative & Media Tracker)
 
-**CineVault** bridges intuitive media cataloging for cinephiles with professional-grade narrative architecture (Beat Sheets, Character Dynamic Tension Matrices, Cinematography Moodboards, and AI Continuity Audits) for Hollywood directors and screenwriters—powered by embedded local AI (< 2 GB VRAM).
+**CineVault** is an enterprise-grade software suite providing both a **Native Desktop Application** (for casual cinephiles and Hollywood directors) distributed via GitHub Releases, and a **Reusable TypeScript SDK (`@ghostbat101/cinevault-sdk`)** published to GitHub Packages.
 
 ---
 
 ## User Review Required
 
 > [!IMPORTANT]
-> **Windows 11 Snap Layouts & Collapsible Sidebar Architecture:**
-> - **Native Snap Resilience**: Full compatibility with Windows 11 2-split, 3-column, and 4-corner snap zones via custom Tauri titlebar hit-testing.
-> - **Window Dimension Boundaries**: Hard minimum window constraint set to **`min_width: 480px`**, **`min_height: 580px`** (default `1280x820px`). The window cannot shrink below this limit, preventing layout clipping.
-> - **Smart Collapsible Sidebar Navigation**:
->   - *Expanded Mode (240px)*: Icons + full labels + shortcut hints (`Ctrl + 1`, etc.).
->   - *Icon-Rail Mode (64px)*: Compact icon view with hover tooltips / flyouts.
->   - *Auto-Collapse Trigger*: Automatically transitions to icon rail below `860px` (e.g. 50% split on 1080p) and mobile drawer overlay below `560px` (e.g. 25% corner snap).
->   - *Manual Toggle & Shortcut*: Footer button (`⮜` / `⮞`) and keyboard shortcut (`Ctrl + B`).
+> **Dual Distribution Pipelines (Releases + Packages):**
+> 1. **Desktop App Release Pipeline (`GitHub Releases`)**: Generates standalone Windows Setup Wizard installers (`.exe` / `.msi`) attached to version tags (e.g. `v0.1.0`).
+> 2. **Developer SDK Package Pipeline (`GitHub Packages`)**: Compiles and publishes `@ghostbat101/cinevault-sdk` (TypeScript definitions, Beat Sheet engines, Tension matrices, MCP protocol adapters) to GitHub Packages npm registry for third-party developers.
 
 ---
 
@@ -25,7 +20,7 @@
 - Threat modeling, file isolation for local poster cache, and type-safe IPC contracts.
 
 ### Phase 1: Toolchain, Monorepo & Build Foundations
-- Scaffold monorepo: `/src-tauri` (Rust core with `tauri.conf.json` window constraints `min_width: 480`, `min_height: 580`), `/src` (React 18 + TypeScript + Vite).
+- Scaffold monorepo: `/src-tauri` (Rust core with `tauri.conf.json` window constraints `min_width: 480`, `min_height: 580`), `/src` (React 18 + TypeScript + Vite), `/packages/cinevault-sdk` (TypeScript SDK).
 - Strict linters, formatters, and path alias bindings.
 
 ### Phase 2: SQLite Relational Storage & Data Portability
@@ -79,16 +74,20 @@
 - 2-Column Linear/Discord layout with instant search (`Ctrl+,`).
 - Full implementation of the 7 settings domains (General, Appearance, AI & Model Vault, Ingestion, Director Defaults, Database & Cache, Telemetry & Diagnostics).
 
-### Phase 12: Advanced Agentic Layer & Sequential Thinking MCP
+### Phase 12: Developer SDK Package & GitHub Packages Publishing
+- Build `/packages/cinevault-sdk` TypeScript package: Narrative models, Beat Sheet logic, Character Tension Calculus, and MCP protocol adapters.
+- Configured automated GitHub Actions workflow to publish to GitHub Packages npm registry (`@ghostbat101/cinevault-sdk`).
+
+### Phase 13: Advanced Agentic Layer & Sequential Thinking MCP
 - In-app bridge connecting local SLM to `@modelcontextprotocol/server-sequential-thinking`.
 - Automated Lore Contradiction & Plot Hole Audit engine across characters and beats.
 
-### Phase 13: Hardening, Performance Profiling & QA
+### Phase 14: Hardening, Performance Profiling & QA
 - VRAM boundary stress testing (< 2GB strict enforcement), 10,000+ item database scaling tests, and automated test suite.
 
-### Phase 14: Packaging, Custom Installer & Release Engineering
+### Phase 15: Packaging, Custom Installer & Release Engineering
 - Custom Windows Installer wizard with custom app and model vault path routing.
-- Cold start pre-warming and distribution bundling.
+- Cold start pre-warming and distribution bundling (`.exe` setup wizard published to GitHub Releases).
 
 ---
 
@@ -96,6 +95,7 @@
 
 ### Automated Tests
 - `npm run build` & TypeScript strict type-check (`tsc --noEmit`).
+- SDK build & type-definition validation (`npm run build:sdk`).
 - Rust unit tests for database migrations, JSON-LD IMDb parsing, and JSON serialization.
 
 ### Manual Verification
@@ -104,6 +104,6 @@
 - Test token streaming AI summary generation.
 - Test Pro-Director Beat Sheet editor and Character Relationship Matrix.
 - Test 7-tab Settings Suite, live search filtering, and instant state persistence.
-- Test window resizing down to minimum $480 \times 580$px boundary and test Windows 11 2-split, 3-split, and 4-corner snap layouts to confirm zero UI breakage and automatic sidebar collapse.
-- Test Telemetry HUD dynamic updates and VRAM warning indicator.
+- Test window resizing down to minimum $480 \times 580$px boundary and test Windows 11 2-split, 3-split, and 4-corner snap layouts to confirm zero UI breakage.
+- Test SDK npm package consumption in a sample TypeScript script.
 - Verify full JSON backup export and lossless restoration.
