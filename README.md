@@ -19,15 +19,6 @@
 
 ---
 
-## 📂 Documentation
-
-- 📄 [Product Requirements Document (PRD)](./docs/PRD.md)
-- 📄 [15-Phase Implementation Plan](./docs/IMPLEMENTATION_PLAN.md)
-- 📄 [Agentic Core Rules](./.agents/rules/cinevault_core_rules.md)
-- 📄 [Industry Standard Engineering Guidelines](./.agents/rules/industry_standards.md)
-
----
-
 ## 📄 License
 
 This project is open source and released under the [MIT License](./LICENSE), providing full creative freedom to use, modify, distribute, and fork.
