@@ -1,6 +1,6 @@
 {
-  "version": "0.1.5",
-  "build": 6,
-  "lastUpdated": "2026-08-15T18:34:30Z",
-  "notes": "Phase 1 Complete: Built typed IPC API layer, browser fallback, design primitives (Modal, Button, Badge, ErrorBoundary), and reactive hooks."
+  "version": "0.1.6",
+  "build": 7,
+  "lastUpdated": "2026-08-15T18:36:25Z",
+  "notes": "Configured GitHub Actions CI/CD for automated GitHub Package publishing and created Release v0.1.5."
 }
