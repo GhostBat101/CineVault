@@ -1,6 +1,6 @@
 {
-  "version": "0.2.2",
-  "build": 13,
-  "lastUpdated": "2026-08-15T18:50:30Z",
-  "notes": "Phase 5 Complete: Embedded Local AI Engine (< 2GB VRAM), Model Vault Manager, Hugging Face GGUF Downloader, and Prompt Builders."
+  "version": "0.2.3",
+  "build": 14,
+  "lastUpdated": "2026-08-15T18:52:45Z",
+  "notes": "Phase 6 Complete: Custom Window Chrome (Titlebar), Collapsible Navigation Sidebar (240px <-> 68px), and Pure CSS Shell."
 }
