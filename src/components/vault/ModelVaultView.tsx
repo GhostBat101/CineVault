@@ -47,10 +47,21 @@ const INITIAL_MODELS: GGUFModelItem[] = [
 export const ModelVaultView: React.FC = () => {
   const telemetry = useTelemetry(1000);
   const [models, setModels] = useState<GGUFModelItem[]>(INITIAL_MODELS);
-  const [vaultPath, setVaultPath] = useState<string>('C:\\Users\\User\\.cinevault\\models');
+  const [vaultPath, setVaultPath] = useState<string>(() => {
+    return localStorage.getItem('cinevault_model_vault_path') || './models';
+  });
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [downloadSpeed, setDownloadSpeed] = useState<string>('0.0');
+
+  const updateVaultPath = (newPath: string) => {
+    setVaultPath(newPath);
+    try {
+      localStorage.setItem('cinevault_model_vault_path', newPath);
+    } catch (e) {
+      console.warn('Could not persist model vault path:', e);
+    }
+  };
 
   // Custom Model Import Modal State
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -223,8 +234,8 @@ export const ModelVaultView: React.FC = () => {
 
         <button
           onClick={() => {
-            const newPath = prompt('Enter new Model Vault directory path (e.g. D:\\AI_Models):', vaultPath);
-            if (newPath) setVaultPath(newPath);
+            const newPath = prompt('Enter new Model Vault directory path (e.g. ./models or D:\\AI_Models):', vaultPath);
+            if (newPath) updateVaultPath(newPath);
           }}
           style={{
             padding: '4px 10px',
