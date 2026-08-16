@@ -54,7 +54,10 @@ export function useAISummary(options?: UseAISummaryOptions) {
   }, []);
 
   const generateSummary = useCallback(
-    async (prompt: string, temperature = 0.7) => {
+    async (
+      params: { prompt: string; title?: string; genres?: string[]; synopsis?: string; mediaType?: string; temperature?: number } | string,
+      temperature = 0.7
+    ) => {
       setIsGenerating(true);
       setError(null);
       setSummary('');
@@ -62,7 +65,11 @@ export function useAISummary(options?: UseAISummaryOptions) {
       setDownloadAttempt(null);
 
       try {
-        const result = await api.generateAISummary(prompt, temperature);
+        const payload = typeof params === 'string'
+          ? { prompt: params, temperature }
+          : { ...params, temperature: params.temperature ?? temperature };
+
+        const result = await api.generateAISummary(payload);
         setSummary(result.generatedText);
         setModelUsed(result.modelUsed);
         setGenerationTimeMs(120);

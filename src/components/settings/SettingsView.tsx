@@ -18,6 +18,7 @@ import {
 
 import { AppUpdateInfo } from '../../types';
 import versionData from '../../../version.json';
+import { isTauri } from '../../services/api';
 
 interface SettingsViewProps {
   currentTheme: ThemeName;
@@ -41,6 +42,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
 
+  // App Installer Live Streaming State
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState<boolean>(false);
+  const [installProgress, setInstallProgress] = useState<number>(0);
+  const [installSpeed, setInstallSpeed] = useState<string>('0.0');
+  const [installStatusText, setInstallStatusText] = useState<string>('Downloading installer...');
+
+  React.useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    if (isTauri()) {
+      import('@tauri-apps/api/event').then(({ listen }) => {
+        listen<any>('app_update_progress', (event) => {
+          const p = event.payload;
+          if (p) {
+            setInstallProgress(Math.round(p.percentage || 0));
+            setInstallSpeed((p.speedMbps || 0).toFixed(1));
+            if (p.isCompleted) {
+              setInstallStatusText('Launching installer & updating CineVault...');
+            }
+          }
+        }).then((unsub) => {
+          unlisten = unsub;
+        });
+      }).catch((err) => console.warn('Could not bind update listener:', err));
+    }
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const handleCheckUpdates = async () => {
     setIsCheckingUpdate(true);
     setUpdateError(null);
@@ -52,6 +82,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setUpdateError(err?.message || 'Failed to check GitHub releases.');
     } finally {
       setIsCheckingUpdate(false);
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    if (!updateInfo) return;
+    const exeAsset = (updateInfo.assets || []).find((a) => a.name && a.name.toLowerCase().endsWith('.exe'));
+    const downloadUrl = exeAsset ? exeAsset.browserDownloadUrl : `${updateInfo.releaseUrl}`;
+    const filename = exeAsset ? exeAsset.name : `CineVault_${updateInfo.latestVersion}_Setup.exe`;
+
+    if (!exeAsset) {
+      // Fallback: open release page in browser
+      window.open(updateInfo.releaseUrl, '_blank');
+      return;
+    }
+
+    setIsInstallingUpdate(true);
+    setInstallProgress(0);
+    setInstallSpeed('0.0');
+    setInstallStatusText('Connecting to GitHub Release CDN...');
+    setUpdateError(null);
+
+    try {
+      await api.downloadAndInstallUpdate(downloadUrl, filename);
+    } catch (err: any) {
+      console.error('[Install Update Error]', err);
+      setUpdateError(err?.message || 'Failed to download or launch update installer.');
+      setIsInstallingUpdate(false);
     }
   };
 
@@ -518,30 +575,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 </div>
 
+                {/* Live Download & Install Progress Bar */}
+                {isInstallingUpdate && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      padding: '14px',
+                      backgroundColor: 'var(--bg-primary)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--accent)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-primary)' }}>
+                      <span>{installStatusText}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{installProgress}% ({installSpeed} MB/s)</span>
+                    </div>
+                    <div
+                      style={{
+                        height: '8px',
+                        backgroundColor: 'var(--bg-tertiary)',
+                        borderRadius: 'var(--radius-full)',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${installProgress}%`,
+                          height: '100%',
+                          backgroundColor: 'var(--accent)',
+                          transition: 'width 0.2s linear',
+                        }}
+                      />
+                    </div>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Streaming setup executable directly from GitHub Release CDN. CineVault will restart to complete the setup.
+                    </span>
+                  </div>
+                )}
+
                 {/* Release Download & Action Links */}
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
-                  <a
-                    href={updateInfo.releaseUrl}
-                    target="_blank"
-                    rel="noreferrer"
+                  {updateInfo.hasUpdate ? (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={<Download size={14} />}
+                      onClick={handleInstallUpdate}
+                      isLoading={isInstallingUpdate}
+                    >
+                      Download & Install Update
+                    </Button>
+                  ) : null}
+
+                  <button
+                    onClick={() => window.open(updateInfo.releaseUrl, '_blank')}
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '6px',
                       padding: '8px 14px',
                       borderRadius: 'var(--radius-sm)',
-                      backgroundColor: updateInfo.hasUpdate ? 'var(--accent)' : 'var(--bg-secondary)',
-                      color: updateInfo.hasUpdate ? 'var(--bg-primary)' : 'var(--text-primary)',
+                      backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
                       border: '1px solid var(--border-medium)',
                       fontWeight: 600,
                       fontSize: '12px',
-                      textDecoration: 'none',
+                      cursor: 'pointer',
                     }}
                   >
-                    <Download size={14} />
-                    <span>{updateInfo.hasUpdate ? 'Download Update from GitHub' : 'View Release on GitHub'}</span>
                     <ExternalLink size={12} />
-                  </a>
+                    <span>View on GitHub</span>
+                  </button>
                 </div>
               </div>
             )}

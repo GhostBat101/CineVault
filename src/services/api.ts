@@ -239,20 +239,32 @@ export const api = {
   getModelVaultStatus: () => tauriInvoke<ModelVaultStatus>('get_model_vault_status'),
   setActiveAiModel: (modelId: string) => tauriInvoke<boolean>('set_active_ai_model', { modelId, model_id: modelId }),
   downloadAiModel: (modelId: string) => tauriInvoke<string>('download_ai_model', { modelId, model_id: modelId }),
-  generateAISummary: (prompt: string, temperature = 0.7, maxTokens = 512) =>
-    tauriInvoke<{ generatedText: string; modelUsed: string; totalTokens: number }>('generate_ai_summary', {
-      request: { prompt, temperature, max_tokens: maxTokens },
-    }),
+  generateAISummary: (params: { prompt: string; title?: string; genres?: string[]; synopsis?: string; mediaType?: string; temperature?: number; maxTokens?: number } | string, temperature = 0.7, maxTokens = 512) => {
+    const request = typeof params === 'string'
+      ? { prompt: params, temperature, max_tokens: maxTokens }
+      : {
+          prompt: params.prompt,
+          title: params.title,
+          genres: params.genres,
+          synopsis: params.synopsis,
+          media_type: params.mediaType,
+          temperature: params.temperature ?? temperature,
+          max_tokens: params.maxTokens ?? maxTokens,
+        };
+    return tauriInvoke<{ generatedText: string; modelUsed: string; totalTokens: number }>('generate_ai_summary', {
+      request,
+    });
+  },
 
   // Relational Database Export / Import
   exportDatabaseJson: () => tauriInvoke<string>('export_database_json'),
   importDatabaseJson: (jsonContent: string) => tauriInvoke<boolean>('import_database_json', { json_content: jsonContent }),
 
-  // On-Demand In-App Update Checker
+  // On-Demand In-App Update Checker with Built Asset Verification
   checkForUpdates: async (): Promise<AppUpdateInfo> => {
     const currentVersion = versionData.version;
     try {
-      const response = await fetch('https://api.github.com/repos/GhostBat101/CineVault/releases/latest', {
+      const response = await fetch('https://api.github.com/repos/GhostBat101/CineVault/releases?per_page=15', {
         headers: {
           'Accept': 'application/vnd.github.v3+json',
         },
@@ -260,24 +272,59 @@ export const api = {
       if (!response.ok) {
         throw new Error(`GitHub API returned HTTP ${response.status}`);
       }
-      const data = await response.json();
-      const latestTag = (data.tag_name || '').replace(/^v/, '');
-      const hasUpdate = latestTag !== '' && latestTag !== currentVersion;
+      const releases: any[] = await response.json();
+      if (!Array.isArray(releases) || releases.length === 0) {
+        return {
+          hasUpdate: false,
+          currentVersion,
+          latestVersion: currentVersion,
+          releaseTitle: 'No Releases Found',
+          releaseNotes: 'No releases are currently published on GitHub.',
+          publishedAt: '',
+          releaseUrl: 'https://github.com/GhostBat101/CineVault/releases',
+          assets: [],
+        };
+      }
 
-      const assets = (data.assets || []).map((a: any) => ({
+      // Version comparison helper: returns true if candidateTag > currentVersion
+      const isNewer = (latest: string, current: string) => {
+        const p1 = latest.split('.').map(Number);
+        const p2 = current.split('.').map(Number);
+        for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+          const num1 = p1[i] || 0;
+          const num2 = p2[i] || 0;
+          if (num1 > num2) return true;
+          if (num1 < num2) return false;
+        }
+        return false;
+      };
+
+      // Find the most recent release that has a built installer executable (.exe)
+      const releaseWithInstaller = releases.find((rel) =>
+        (rel.assets || []).some((a: any) => a.name && a.name.toLowerCase().endsWith('.exe'))
+      );
+
+      // If no release has an .exe yet, inspect the latest release
+      const candidate = releaseWithInstaller || releases[0];
+      const candidateTag = (candidate.tag_name || '').replace(/^v/, '');
+      
+      const assets = (candidate.assets || []).map((a: any) => ({
         name: a.name,
         size: a.size,
         browserDownloadUrl: a.browser_download_url,
       }));
 
+      const hasExe = assets.some((a: { name?: string }) => Boolean(a.name && a.name.toLowerCase().endsWith('.exe')));
+      const hasUpdate = hasExe && isNewer(candidateTag, currentVersion);
+
       return {
         hasUpdate,
         currentVersion,
-        latestVersion: latestTag || currentVersion,
-        releaseTitle: data.name || data.tag_name || 'Latest Release',
-        releaseNotes: data.body || 'No release notes provided.',
-        publishedAt: data.published_at || '',
-        releaseUrl: data.html_url || 'https://github.com/GhostBat101/CineVault/releases',
+        latestVersion: candidateTag || currentVersion,
+        releaseTitle: candidate.name || candidate.tag_name || 'Latest Release',
+        releaseNotes: candidate.body || 'No release notes provided.',
+        publishedAt: candidate.published_at || '',
+        releaseUrl: candidate.html_url || 'https://github.com/GhostBat101/CineVault/releases',
         assets,
       };
     } catch (err: any) {
@@ -285,6 +332,13 @@ export const api = {
       throw new Error(`Failed to check for updates: ${err?.message || err}`);
     }
   },
+
+  downloadAndInstallUpdate: (installerUrl: string, filename: string) =>
+    tauriInvoke<boolean>('download_and_install_update', {
+      installerUrl,
+      installer_url: installerUrl,
+      filename,
+    }),
 
   // Window Controls (Native Frameless Chrome)
   minimizeWindow: () => tauriInvoke<void>('app_minimize'),

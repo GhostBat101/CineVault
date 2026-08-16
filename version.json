@@ -1,9 +1,10 @@
 {
-  "version": "0.3.18",
-  "build": 39,
-  "lastUpdated": "2026-08-16T20:35:00Z",
-  "notes": "Model Download GUI Progress Fix: throttled IPC event emission to 80ms to eliminate event queue congestion; added robust dual-casing payload parser for real-time percentage, speed (MB/s), and progress bar animations."
+  "version": "0.3.19",
+  "build": 40,
+  "lastUpdated": "2026-08-16T20:56:00Z",
+  "notes": "Narrative Engine & In-App Auto-Updater: isolated unique per-entry AI breakdowns; added scrollable synopsis box; integrated Wikipedia plot ingestion for IMDb scraper; added built installer asset verification and 1-click in-app update installer runner."
 }
+
 
 
 

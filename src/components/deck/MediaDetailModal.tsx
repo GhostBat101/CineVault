@@ -1,15 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Media } from '../../types';
 import { useAISummary } from '../../hooks/useAISummary';
-import { Star, Clock, Sparkles, Compass, AlertTriangle, WifiOff, RefreshCw } from 'lucide-react';
+import { api } from '../../services/api';
+import { Star, Clock, Sparkles, Compass, AlertTriangle, WifiOff, RefreshCw, Film, Tv } from 'lucide-react';
 
 interface MediaDetailModalProps {
   media: Media | null;
   isOpen: boolean;
   onClose: () => void;
   onOpenDirectorSuite: (media: Media) => void;
+  onMediaUpdated?: (updated: Media) => void;
 }
 
 export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
@@ -17,35 +19,69 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   isOpen,
   onClose,
   onOpenDirectorSuite,
+  onMediaUpdated,
 }) => {
   const {
     isGenerating,
     summary,
+    setSummary,
     generateSummary,
     error,
     downloadProgress,
     downloadSpeed,
     downloadAttempt,
     clearError,
-  } = useAISummary();
+  } = useAISummary({
+    onSuccess: async (generatedText) => {
+      if (media) {
+        const updated = { ...media, aiSummary: generatedText };
+        try {
+          await api.saveMedia(updated);
+          if (onMediaUpdated) onMediaUpdated(updated);
+        } catch (e) {
+          console.warn('Could not persist updated AI summary to database:', e);
+        }
+      }
+    },
+  });
+
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'ai-breakdown'>('overview');
+
+  // Reset/sync summary whenever opened or switched to a different media entry
+  useEffect(() => {
+    if (media) {
+      setSummary(media.aiSummary || '');
+      clearError();
+      if (media.aiSummary) {
+        setActiveSubTab('ai-breakdown');
+      } else {
+        setActiveSubTab('overview');
+      }
+    }
+  }, [media?.id]);
 
   if (!media) return null;
 
-  const handleGenerateAI = () => {
+  const handleGenerateAI = async () => {
     setActiveSubTab('ai-breakdown');
     clearError();
-    generateSummary(
-      `Analyze the thematic layers, character arcs, and cinematic subtext for "${media.title}". Synopsis: ${media.synopsis}`
-    );
+    await generateSummary({
+      prompt: `Analyze the thematic layers, character arcs, and cinematic subtext for "${media.title}".`,
+      title: media.title,
+      genres: media.genres,
+      synopsis: media.synopsis,
+      mediaType: media.mediaType,
+    });
   };
+
+  const isSeries = media.mediaType === 'series' || (media as any).media_type === 'series';
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title={media.title}
-      subtitle={`${media.year ? `${media.year} • ` : ''}${media.mediaType.toUpperCase()} • ${media.genres.join(', ')}`}
+      subtitle={`${media.year ? `${media.year} • ` : ''}${isSeries ? 'TV SERIES' : 'MOVIE'} • ${media.genres.join(', ')}`}
       maxWidth="720px"
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -56,11 +92,12 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               src={media.posterUrl}
               alt={media.title}
               style={{
-                width: '120px',
-                height: '180px',
+                width: '130px',
+                height: '190px',
                 objectFit: 'cover',
                 borderRadius: 'var(--radius-md)',
                 border: '1px solid var(--border-medium)',
+                flexShrink: 0,
               }}
             />
           )}
@@ -68,6 +105,24 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                <span
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: 'var(--radius-xs)',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-subtle)',
+                  }}
+                >
+                  {isSeries ? <Tv size={12} /> : <Film size={12} />}
+                  {isSeries ? 'Series' : 'Feature Film'}
+                </span>
+
                 {media.imdbRating && (
                   <div
                     style={{
@@ -91,7 +146,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 )}
               </div>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                 {media.genres.map((g) => (
                   <span
                     key={g}
@@ -108,13 +163,27 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 ))}
               </div>
 
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                {media.synopsis}
-              </p>
+              {/* Scrollable Synopsis Box with Custom Scrollwheel Support */}
+              <div
+                style={{
+                  maxHeight: '90px',
+                  overflowY: 'auto',
+                  padding: '8px 12px',
+                  backgroundColor: 'var(--bg-primary)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '12px',
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.55,
+                  scrollbarWidth: 'thin',
+                }}
+              >
+                {media.synopsis || 'No synopsis recorded for this entry.'}
+              </div>
             </div>
 
             {/* Action Bar */}
-            <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
               <Button
                 variant="primary"
                 size="sm"
