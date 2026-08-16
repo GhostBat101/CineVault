@@ -87,7 +87,7 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
         const res = await fetch(`https://v2.sg.media-imdb.com/suggestion/${firstChar}/${imdbId}.json`);
         if (res.ok) {
           const json = await res.json();
-          const entry = json.d?.find((item: any) => item.id === imdbId) || json.d?.[0];
+          const entry = json.d?.find((item: Record<string, unknown>) => item.id === imdbId) || json.d?.[0];
           if (entry) {
             return {
               imdb_id: imdbId,
@@ -104,7 +104,7 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
                 name: name.trim(),
                 character_name: null,
                 avatar_url: null,
-              })).filter((c: any) => Boolean(c.name)),
+              })).filter((c: { name: string }) => Boolean(c.name)),
             } as T;
           }
         }

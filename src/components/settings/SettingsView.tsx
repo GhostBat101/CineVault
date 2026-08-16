@@ -51,8 +51,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       a.download = `cinevault_backup_${Date.now()}.json`;
       a.click();
       showStatus('Full relational database exported with SHA-256 checksum!');
-    } catch (err: any) {
-      alert(`Export failed: ${err?.message}`);
+    } catch (err) {
+      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -60,16 +60,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
-    input.onchange = async (e: any) => {
-      const file = e.target.files?.[0];
+    input.onchange = async (e) => {
+      const target = e.target as HTMLInputElement;
+      const file = target.files?.[0];
       if (!file) return;
       const text = await file.text();
       try {
         await api.importDatabaseJson(text);
         showStatus('Database restored successfully! Reloading...');
         setTimeout(() => window.location.reload(), 1000);
-      } catch (err: any) {
-        alert(`Import error: ${err?.message}`);
+      } catch (err) {
+        alert(`Import error: ${err instanceof Error ? err.message : String(err)}`);
       }
     };
     input.click();

@@ -138,11 +138,60 @@ pub struct FullDatabaseExport {
     pub lore_notes: Vec<LoreNoteRecord>,
 }
 
-pub struct Repository;
+pub struct Repository {
+    pub conn: std::sync::Mutex<Connection>,
+}
 
 impl Repository {
+    pub fn new(db_path: &std::path::Path) -> Result<Self> {
+        let conn = Connection::open(db_path)?;
+        
+        // Optimize for performance and concurrency
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;"
+        )?;
+
+        Ok(Self {
+            conn: std::sync::Mutex::new(conn),
+        })
+    }
+
+    pub fn init(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS media (
+                id TEXT PRIMARY KEY,
+                imdb_id TEXT,
+                title TEXT NOT NULL,
+                original_title TEXT,
+                year INTEGER,
+                media_type TEXT NOT NULL,
+                runtime_minutes INTEGER,
+                imdb_rating REAL,
+                poster_url TEXT,
+                poster_local_path TEXT,
+                synopsis TEXT,
+                genres TEXT,
+                directors TEXT,
+                raw_scraped_json TEXT,
+                ai_summary TEXT,
+                ai_model_used TEXT,
+                user_status TEXT NOT NULL,
+                user_rating REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            "#
+        )?;
+        Ok(())
+    }
+
     // --- MEDIA CRUD ---
-    pub fn insert_media(conn: &Connection, record: &MediaRecord) -> Result<()> {
+    pub fn insert_media(&self, record: &MediaRecord) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
         let genres_json = serde_json::to_string(&record.genres).unwrap_or_else(|_| "[]".to_string());
         let directors_json = serde_json::to_string(&record.directors).unwrap_or_else(|_| "[]".to_string());
 
@@ -181,7 +230,8 @@ impl Repository {
         Ok(())
     }
 
-    pub fn get_all_media(conn: &Connection) -> Result<Vec<MediaRecord>> {
+    pub fn get_all_media(&self) -> Result<Vec<MediaRecord>> {
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             r#"
             SELECT id, imdb_id, title, original_title, year, media_type,
@@ -228,13 +278,14 @@ impl Repository {
         Ok(results)
     }
 
-    pub fn delete_media(conn: &Connection, id: &str) -> Result<usize> {
+    pub fn delete_media(&self, id: &str) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM media WHERE id = ?1", params![id])
     }
 
     // --- FULL RELATIONAL EXPORT ---
-    pub fn export_full_database(conn: &Connection) -> Result<FullDatabaseExport> {
-        let media = Self::get_all_media(conn)?;
+    pub fn export_full_database(&self) -> Result<FullDatabaseExport> {
+        let media = self.get_all_media()?;
         let exported_at = chrono_stub_now();
         
         let mut export_data = FullDatabaseExport {

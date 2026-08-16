@@ -54,9 +54,9 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         updatedAt: new Date().toISOString(),
       };
       setScrapedData(mediaEntry);
-    } catch (err: any) {
+    } catch (err) {
       console.error('[IMDb Extract Error]', err);
-      setError(err?.message || 'Failed to extract IMDb metadata. Check URL.');
+      setError(err instanceof Error ? err.message : String(err) || 'Failed to extract IMDb metadata. Check URL.');
     } finally {
       setIsLoading(false);
     }
@@ -69,8 +69,8 @@ export const IngestModal: React.FC<IngestModalProps> = ({
       await api.saveMedia(scrapedData);
       onMediaSaved(scrapedData);
       handleClose();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to save media entry.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err) || 'Failed to save media entry.');
     } finally {
       setIsLoading(false);
     }
@@ -95,8 +95,8 @@ export const IngestModal: React.FC<IngestModalProps> = ({
       await api.saveMedia(originalEntry);
       onMediaSaved(originalEntry);
       handleClose();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to save original canvas.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err) || 'Failed to save original canvas.');
     } finally {
       setIsLoading(false);
     }

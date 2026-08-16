@@ -1,22 +1,13 @@
-use crate::telemetry::hardware::TelemetryData;
+use tauri::State;
+use crate::telemetry::hardware::{TelemetryData, HardwareMonitor};
 use crate::scraper::imdb::{ScrapedMedia, ImdbScraper};
-use crate::ai::engine::{InferenceRequest, InferenceResponse};
-use crate::db::repository::{MediaRecord, FullDatabaseExport};
+use crate::ai::engine::{InferenceRequest, InferenceResponse, LocalAIEngine};
+use crate::db::repository::{MediaRecord, FullDatabaseExport, Repository};
 
 #[tauri::command]
-pub async fn get_telemetry() -> Result<TelemetryData, String> {
-    Ok(TelemetryData {
-        cpu_usage_percent: 3.8,
-        ram_used_mb: 1180,
-        ram_total_mb: 16384,
-        gpu_name: Some("DirectX 12 / Dedicated GPU".to_string()),
-        vram_used_mb: 1120,
-        vram_total_mb: 2048,
-        is_vram_critical: false,
-        active_offload_mode: "gpu_auto".to_string(),
-        gpu_layers_offloaded: 28,
-        total_gpu_layers: 28,
-    })
+pub async fn get_telemetry(monitor: State<'_, HardwareMonitor>) -> Result<TelemetryData, String> {
+    // For now, assume model size of 1500MB (1.5B param Q4) and false for CPU forced mode
+    Ok(monitor.sample_telemetry(false, 1500))
 }
 
 #[tauri::command]
@@ -26,46 +17,45 @@ pub async fn extract_imdb(imdb_url: Option<String>, imdbUrl: Option<String>) -> 
 }
 
 #[tauri::command]
-pub async fn generate_ai_summary(request: InferenceRequest) -> Result<InferenceResponse, String> {
-    Ok(InferenceResponse {
-        generated_text: format!("AI Narrative Analysis for: {}", request.prompt),
-        model_used: "Llama-3.2-1B-Instruct-Q4_K_M".to_string(),
-        total_tokens: 142,
-        generation_time_ms: 120,
-    })
+pub async fn generate_ai_summary(
+    request: InferenceRequest,
+    engine: State<'_, LocalAIEngine>
+) -> Result<InferenceResponse, String> {
+    engine.run_inference(request).await
 }
 
 #[tauri::command]
-pub async fn save_media_entry(media: MediaRecord) -> Result<String, String> {
+pub async fn save_media_entry(
+    media: MediaRecord,
+    repo: State<'_, Repository>
+) -> Result<String, String> {
+    repo.insert_media(&media).map_err(|e| e.to_string())?;
     Ok(format!("Successfully saved media: {}", media.title))
 }
 
 #[tauri::command]
-pub async fn get_all_media() -> Result<Vec<MediaRecord>, String> {
-    Ok(vec![])
+pub async fn get_all_media(repo: State<'_, Repository>) -> Result<Vec<MediaRecord>, String> {
+    repo.get_all_media().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn export_database_json() -> Result<String, String> {
-    let export = FullDatabaseExport {
-        version: "0.1.7".to_string(),
-        exported_at: "2026-08-15T18:41:00Z".to_string(),
-        sha256_checksum: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
-        media: vec![],
-        characters: vec![],
-        story_arcs: vec![],
-        beat_sheets: vec![],
-        relationships: vec![],
-        cinematography_cues: vec![],
-        timeline_events: vec![],
-        lore_notes: vec![],
-    };
+pub async fn export_database_json(repo: State<'_, Repository>) -> Result<String, String> {
+    let export = repo.export_full_database().map_err(|e| e.to_string())?;
     serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn import_database_json(json_content: String) -> Result<bool, String> {
-    let _parsed: FullDatabaseExport = serde_json::from_str(&json_content)
+pub async fn import_database_json(
+    json_content: String,
+    repo: State<'_, Repository>
+) -> Result<bool, String> {
+    let parsed: FullDatabaseExport = serde_json::from_str(&json_content)
         .map_err(|e| format!("Invalid JSON schema: {}", e))?;
+    
+    // In a full implementation, we'd loop through parsed.media and insert them.
+    for media in parsed.media {
+        let _ = repo.insert_media(&media);
+    }
+    
     Ok(true)
 }
