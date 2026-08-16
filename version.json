@@ -1,6 +1,6 @@
 {
-  "version": "0.3.2",
-  "build": 23,
-  "lastUpdated": "2026-08-16T15:09:35Z",
-  "notes": "Phase 13 Complete: Windows 11 Responsive Snap Layout Boundaries, Media Queries, and Error Boundary Isolation."
+  "version": "0.3.3",
+  "build": 24,
+  "lastUpdated": "2026-08-16T15:12:25Z",
+  "notes": "Phase 14 Complete: Automated Vitest Test Suite, Narrative Beat Pacing Calculations, and VRAM Offload Allocator Math."
 }
