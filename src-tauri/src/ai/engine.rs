@@ -1,5 +1,4 @@
 use crate::ai::models::{ModelMetadata, get_default_model, get_supported_models};
-use crate::ai::prompts::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

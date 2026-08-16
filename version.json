@@ -1,9 +1,10 @@
 {
-  "version": "0.3.19",
-  "build": 40,
-  "lastUpdated": "2026-08-16T20:56:00Z",
-  "notes": "Narrative Engine & In-App Auto-Updater: isolated unique per-entry AI breakdowns; added scrollable synopsis box; integrated Wikipedia plot ingestion for IMDb scraper; added built installer asset verification and 1-click in-app update installer runner."
+  "version": "0.3.20",
+  "build": 41,
+  "lastUpdated": "2026-08-16T21:18:00Z",
+  "notes": "CI Desktop Build Fix: added urlencoding crate to Cargo.toml and fixed parse_dom_fallback synchronous call to guarantee successful CI compilation and installer asset publication on GitHub Actions."
 }
+
 
 
 

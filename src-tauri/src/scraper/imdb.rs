@@ -57,7 +57,7 @@ impl ImdbScraper {
                     if let Some(scraped) = Self::parse_json_ld(&imdb_id, &response_text).await {
                         return Ok(scraped);
                     }
-                    if let Ok(scraped) = Self::parse_dom_fallback(&imdb_id, &response_text).await {
+                    if let Ok(scraped) = Self::parse_dom_fallback(&imdb_id, &response_text) {
                         return Ok(scraped);
                     }
                 }
