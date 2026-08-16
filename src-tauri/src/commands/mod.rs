@@ -20,8 +20,9 @@ pub async fn get_telemetry() -> Result<TelemetryData, String> {
 }
 
 #[tauri::command]
-pub async fn extract_imdb(imdb_url: String) -> Result<ScrapedMedia, String> {
-    ImdbScraper::scrape_url(&imdb_url).await
+pub async fn extract_imdb(imdb_url: Option<String>, imdbUrl: Option<String>) -> Result<ScrapedMedia, String> {
+    let target = imdb_url.or(imdbUrl).ok_or_else(|| "No IMDb URL or ID provided".to_string())?;
+    ImdbScraper::scrape_url(&target).await
 }
 
 #[tauri::command]

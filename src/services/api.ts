@@ -131,7 +131,7 @@ export const api = {
 
   // Media & Scraping
   getAllMedia: () => tauriInvoke<Media[]>('get_all_media'),
-  extractImdb: (imdbUrl: string) => tauriInvoke<any>('extract_imdb', { imdb_url: imdbUrl }),
+  extractImdb: (imdbUrl: string) => tauriInvoke<any>('extract_imdb', { imdb_url: imdbUrl, imdbUrl }),
   saveMedia: (media: Media) => tauriInvoke<string>('save_media_entry', { media }),
 
   // Local AI Generation

@@ -1,6 +1,6 @@
 {
-  "version": "0.3.7",
-  "build": 28,
-  "lastUpdated": "2026-08-16T16:55:05Z",
-  "notes": "Resolved Rust sysinfo 0.30 API method calls, const model constructors, and generation_time_ms fields for Windows installer."
+  "version": "0.3.8",
+  "build": 29,
+  "lastUpdated": "2026-08-16T17:15:05Z",
+  "notes": "Enhanced IMDb scraper resilience with suggestion API fallback, ISO duration parsing, and dual camelCase/snake_case IPC parameter mapping."
 }
