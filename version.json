@@ -1,6 +1,7 @@
 {
-  "version": "0.3.13",
-  "build": 34,
-  "lastUpdated": "2026-08-16T19:15:00Z",
-  "notes": "First-Use AI Downloader, System Logging & In-App Updates: implemented resilient 5-retry first-use GGUF model auto-download with offline network detection and warning notifications; added portable logs directory and logger system; added on-demand In-App Update Checker in Settings fetching official GitHub releases."
+  "version": "0.3.14",
+  "build": 35,
+  "lastUpdated": "2026-08-16T19:28:00Z",
+  "notes": "CI Build Fix & JSX Hierarchy Repair: fixed unclosed div elements in SettingsView.tsx developer tab; resolved unused TypeScript definitions and updateVaultPath callback in ModelVaultView.tsx; verified zero-error tsc and vite production bundle."
 }
+

@@ -13,7 +13,6 @@ export const ModelVaultView: React.FC = () => {
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [downloadSpeed, setDownloadSpeed] = useState<string>('0.0');
-  const [isLoadingStatus, setIsLoadingStatus] = useState<boolean>(true);
 
   const fetchVaultStatus = async () => {
     try {
@@ -24,8 +23,6 @@ export const ModelVaultView: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to get model vault status:', err);
-    } finally {
-      setIsLoadingStatus(false);
     }
   };
 
@@ -237,7 +234,7 @@ export const ModelVaultView: React.FC = () => {
         <button
           onClick={() => {
             const newPath = prompt('Enter new Model Vault directory path (e.g. ./models or D:\\AI_Models):', vaultPath);
-            if (newPath) updateVaultPath(newPath);
+            if (newPath) setVaultPath(newPath);
           }}
           style={{
             padding: '4px 10px',
