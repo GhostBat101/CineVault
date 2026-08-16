@@ -20,8 +20,45 @@ pub async fn extract_imdb(imdb_url: Option<String>, imdbUrl: Option<String>) -> 
 #[tauri::command]
 pub async fn generate_ai_summary(
     request: InferenceRequest,
-    engine: State<'_, LocalAIEngine>
+    engine: State<'_, LocalAIEngine>,
+    app_handle: AppHandle,
 ) -> Result<InferenceResponse, String> {
+    crate::logger::Logger::info(&format!("Generating AI Summary for prompt: {:.60}...", request.prompt));
+    
+    // Check if active model file is on disk
+    let status = engine.get_vault_status();
+    let active_item = status.models.iter().find(|m| m.is_active);
+    
+    if let Some(item) = active_item {
+        if !item.is_installed {
+            crate::logger::Logger::warn(&format!("Active model '{}' is not installed. Initiating resilient first-use auto-download...", item.id));
+            
+            // 1. Check internet connectivity first
+            if !ModelDownloader::is_internet_connected().await {
+                let err_msg = "OFFLINE_NO_INTERNET: Cannot initialize local AI model without an internet connection. Please connect to download Llama 3.2 1B (808 MB) or import a local .GGUF in the Model Vault.".to_string();
+                crate::logger::Logger::warn(&err_msg);
+                return Err(err_msg);
+            }
+            
+            // 2. Download with 5 retries
+            let vault_dir = engine.get_vault_dir();
+            let handle = app_handle.clone();
+            let filename = item.filename.clone();
+            let download_url = item.download_url.clone();
+            let sha256 = item.sha256.clone();
+            
+            ModelDownloader::download_gguf_model(
+                &download_url,
+                &vault_dir,
+                &filename,
+                &sha256,
+                move |progress| {
+                    let _ = handle.emit("model_download_progress", progress);
+                },
+            ).await?;
+        }
+    }
+    
     engine.run_inference(request).await
 }
 

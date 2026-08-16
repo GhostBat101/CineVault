@@ -1,6 +1,6 @@
 {
-  "version": "0.3.12",
-  "build": 33,
-  "lastUpdated": "2026-08-16T18:53:00Z",
-  "notes": "Native Model Downloader & UI Polish: wired real backend GGUF model downloading and disk inspection to portable models folder; removed duplicate OS window top bar via decorations: false; added Director Suite active title switcher dropdown; restricted search bar to Library tab."
+  "version": "0.3.13",
+  "build": 34,
+  "lastUpdated": "2026-08-16T19:15:00Z",
+  "notes": "First-Use AI Downloader, System Logging & In-App Updates: implemented resilient 5-retry first-use GGUF model auto-download with offline network detection and warning notifications; added portable logs directory and logger system; added on-demand In-App Update Checker in Settings fetching official GitHub releases."
 }

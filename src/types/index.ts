@@ -196,3 +196,21 @@ export interface AppSettings {
   uiScaling: number;
 }
 
+export interface AppUpdateAsset {
+  name: string;
+  size: number;
+  browserDownloadUrl: string;
+}
+
+export interface AppUpdateInfo {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  releaseTitle: string;
+  releaseNotes: string;
+  publishedAt: string;
+  releaseUrl: string;
+  assets: AppUpdateAsset[];
+}
+
+

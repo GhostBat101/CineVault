@@ -6,6 +6,7 @@ pub mod scraper;
 pub mod ai;
 pub mod telemetry;
 pub mod commands;
+pub mod logger;
 
 pub fn run() {
     tauri::Builder::default()
@@ -14,19 +15,26 @@ pub fn run() {
             let exe_path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let app_data_dir = exe_path.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf();
             
-            // Database
+            // 1. Portable Logging Directory
+            let logs_dir = app_data_dir.join("logs");
+            let _ = logger::Logger::init(&logs_dir);
+            logger::Logger::info(&format!("CineVault Booting. Base Directory: {:?}", app_data_dir));
+
+            // 2. Database
             let db_path = app_data_dir.join("cinevault.db");
+            logger::Logger::info(&format!("Initializing SQLite Database at {:?}", db_path));
             let repo = db::repository::Repository::new(&db_path).expect("Failed to initialize database");
             repo.init().expect("Failed to create tables");
             app.manage(repo);
 
-            // Telemetry
+            // 3. Telemetry
             let hardware_monitor = telemetry::hardware::HardwareMonitor::new();
             app.manage(hardware_monitor);
 
-            // AI Models Directory
+            // 4. AI Models Directory
             let models_dir = app_data_dir.join("models");
             fs::create_dir_all(&models_dir).unwrap_or_default();
+            logger::Logger::info(&format!("Mounting AI Models Vault at {:?}", models_dir));
             let ai_engine = ai::engine::LocalAIEngine::new(models_dir);
             app.manage(ai_engine);
 

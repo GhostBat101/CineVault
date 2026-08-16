@@ -16,6 +16,9 @@ import {
   ExternalLink,
 } from 'lucide-react';
 
+import { AppUpdateInfo } from '../../types';
+import versionData from '../../../version.json';
+
 interface SettingsViewProps {
   currentTheme: ThemeName;
   onThemeChange: (theme: ThemeName) => void;
@@ -26,12 +29,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onThemeChange,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'general' | 'ai' | 'scraper' | 'director' | 'storage' | 'data' | 'developer'
+    'general' | 'ai' | 'scraper' | 'director' | 'storage' | 'data' | 'developer' | 'updates'
   >('general');
 
   // AI settings
   const [temperature, setTemperature] = useState<number>(0.7);
   const [offloadMode, setOffloadMode] = useState<string>('gpu_auto');
+
+  // App Update Checker State
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
+  const handleCheckUpdates = async () => {
+    setIsCheckingUpdate(true);
+    setUpdateError(null);
+    try {
+      const info = await api.checkForUpdates();
+      setUpdateInfo(info);
+    } catch (err: any) {
+      console.error('[Update Check Error]', err);
+      setUpdateError(err?.message || 'Failed to check GitHub releases.');
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
 
   // Status message
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -84,6 +106,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     { id: 'storage', label: 'Storage & Cache', icon: HardDrive },
     { id: 'data', label: 'Data & Portability', icon: Database },
     { id: 'developer', label: 'Developer & SDK', icon: Code2 },
+    { id: 'updates', label: 'Updates & Releases', icon: RefreshCw },
   ] as const;
 
   return (
@@ -353,7 +376,174 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <ExternalLink size={13} />
                 </a>
               </div>
+          </div>
+        )}
+
+        {/* 8. Updates & Releases Tab (On-Demand GitHub Release Checker) */}
+        {activeTab === 'updates' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '4px' }}>Updates & Release Management</h3>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                Check the official public repository for updates on demand. CineVault will never update silently in the background.
+              </p>
             </div>
+
+            {/* Current Installed Version Card */}
+            <div
+              className="glass-panel"
+              style={{
+                padding: '16px 20px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Installed Application Version</div>
+                <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                  v{versionData.version} <span style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-muted)' }}>(Build {versionData.build})</span>
+                </div>
+              </div>
+
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<RefreshCw size={14} />}
+                onClick={handleCheckUpdates}
+                isLoading={isCheckingUpdate}
+              >
+                Check for Updates
+              </Button>
+            </div>
+
+            {/* Error Banner */}
+            {updateError && (
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  color: 'var(--status-error)',
+                  fontSize: '12px',
+                }}
+              >
+                <strong>Update Check Failed:</strong> {updateError}
+              </div>
+            )}
+
+            {/* Update Info Display */}
+            {updateInfo && !isCheckingUpdate && (
+              <div
+                className="glass-panel"
+                style={{
+                  padding: '20px',
+                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: updateInfo.hasUpdate ? 'var(--bg-secondary)' : 'var(--bg-tertiary)',
+                  border: `1px solid ${updateInfo.hasUpdate ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '14px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {updateInfo.hasUpdate ? (
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          padding: '3px 10px',
+                          borderRadius: 'var(--radius-full)',
+                          backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                          color: 'var(--status-error)',
+                          border: '1px solid var(--status-error)',
+                        }}
+                      >
+                        NEW UPDATE AVAILABLE
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          padding: '3px 10px',
+                          borderRadius: 'var(--radius-full)',
+                          backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                          color: 'var(--status-success)',
+                          border: '1px solid var(--status-success)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        <CheckCircle size={12} /> UP TO DATE
+                      </span>
+                    )}
+                    <span style={{ fontSize: '14px', fontWeight: 600 }}>
+                      Latest: v{updateInfo.latestVersion}
+                    </span>
+                  </div>
+
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Published: {new Date(updateInfo.publishedAt).toLocaleDateString()}
+                  </span>
+                </div>
+
+                <div>
+                  <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    {updateInfo.releaseTitle}
+                  </h4>
+                  <div
+                    style={{
+                      fontSize: '12px',
+                      color: 'var(--text-secondary)',
+                      backgroundColor: 'var(--bg-primary)',
+                      padding: '12px',
+                      borderRadius: 'var(--radius-sm)',
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: 1.5,
+                      maxHeight: '180px',
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {updateInfo.releaseNotes}
+                  </div>
+                </div>
+
+                {/* Release Download & Action Links */}
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
+                  <a
+                    href={updateInfo.releaseUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 14px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: updateInfo.hasUpdate ? 'var(--accent)' : 'var(--bg-secondary)',
+                      color: updateInfo.hasUpdate ? 'var(--bg-primary)' : 'var(--text-primary)',
+                      border: '1px solid var(--border-medium)',
+                      fontWeight: 600,
+                      fontSize: '12px',
+                      textDecoration: 'none',
+                    }}
+                  >
+                    <Download size={14} />
+                    <span>{updateInfo.hasUpdate ? 'Download Update from GitHub' : 'View Release on GitHub'}</span>
+                    <ExternalLink size={12} />
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

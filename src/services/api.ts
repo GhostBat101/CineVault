@@ -2,7 +2,9 @@ import {
   Media,
   HardwareTelemetry,
   ModelVaultStatus,
+  AppUpdateInfo,
 } from '../types';
+import versionData from '../../version.json';
 
 // Detect whether the app is executing inside Tauri Webview or standard Browser
 export const isTauri = () => {
@@ -245,4 +247,42 @@ export const api = {
   // Relational Database Export / Import
   exportDatabaseJson: () => tauriInvoke<string>('export_database_json'),
   importDatabaseJson: (jsonContent: string) => tauriInvoke<boolean>('import_database_json', { json_content: jsonContent }),
+
+  // On-Demand In-App Update Checker
+  checkForUpdates: async (): Promise<AppUpdateInfo> => {
+    const currentVersion = versionData.version;
+    try {
+      const response = await fetch('https://api.github.com/repos/GhostBat101/CineVault/releases/latest', {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`GitHub API returned HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      const latestTag = (data.tag_name || '').replace(/^v/, '');
+      const hasUpdate = latestTag !== '' && latestTag !== currentVersion;
+
+      const assets = (data.assets || []).map((a: any) => ({
+        name: a.name,
+        size: a.size,
+        browserDownloadUrl: a.browser_download_url,
+      }));
+
+      return {
+        hasUpdate,
+        currentVersion,
+        latestVersion: latestTag || currentVersion,
+        releaseTitle: data.name || data.tag_name || 'Latest Release',
+        releaseNotes: data.body || 'No release notes provided.',
+        publishedAt: data.published_at || '',
+        releaseUrl: data.html_url || 'https://github.com/GhostBat101/CineVault/releases',
+        assets,
+      };
+    } catch (err: any) {
+      console.warn('[Check For Updates Error]', err);
+      throw new Error(`Failed to check for updates: ${err?.message || err}`);
+    }
+  },
 };
