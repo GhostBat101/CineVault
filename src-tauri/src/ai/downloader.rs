@@ -24,11 +24,11 @@ pub struct ModelDownloader;
 impl ModelDownloader {
     pub async fn is_internet_connected() -> bool {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(4))
+            .timeout(std::time::Duration::from_secs(5))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             .build();
         
         if let Ok(client) = client {
-            // Ping Hugging Face or Cloudflare DNS
             if let Ok(resp) = client.head("https://huggingface.co").send().await {
                 return resp.status().is_success() || resp.status().is_redirection();
             }
@@ -81,7 +81,8 @@ impl ModelDownloader {
                 });
                 return Ok(target_path);
             } else {
-                Logger::warn(&format!("Existing file {:?} failed SHA-256. Redownloading...", target_path));
+                Logger::warn(&format!("Existing file {:?} failed SHA-256 or is incomplete. Removing before download...", target_path));
+                let _ = tokio::fs::remove_file(&target_path).await;
             }
         }
 
@@ -91,23 +92,31 @@ impl ModelDownloader {
 
         for attempt in 1..=max_retries {
             Logger::info(&format!("Download attempt {}/{} for {}...", attempt, max_retries, filename));
+            Logger::info(&format!("Connecting to source URL: {}", download_url));
 
             let client = match reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .tcp_keepalive(Some(std::time::Duration::from_secs(15)))
+                .redirect(reqwest::redirect::Policy::limited(10))
                 .build()
             {
                 Ok(c) => c,
                 Err(e) => {
-                    last_error = e.to_string();
+                    last_error = format!("Client build error: {}", e);
+                    Logger::error(&last_error);
                     continue;
                 }
             };
 
             let response_result = client.get(download_url).send().await;
             let response = match response_result {
-                Ok(resp) if resp.status().is_success() => resp,
+                Ok(resp) if resp.status().is_success() => {
+                    Logger::info(&format!("Connected! HTTP Status: {} | Content-Length: {:?}", resp.status(), resp.content_length()));
+                    resp
+                }
                 Ok(resp) => {
-                    last_error = format!("HTTP error: {}", resp.status());
+                    last_error = format!("HTTP error status: {}", resp.status());
                     Logger::warn(&format!("Attempt {} HTTP status failed: {}", attempt, last_error));
                     tokio::time::sleep(std::time::Duration::from_millis(attempt as u64 * 1500)).await;
                     continue;
@@ -127,7 +136,8 @@ impl ModelDownloader {
             let mut file = match file_result {
                 Ok(f) => f,
                 Err(e) => {
-                    last_error = format!("Failed to create model file: {}", e);
+                    last_error = format!("Failed to create model file on disk: {}", e);
+                    Logger::error(&last_error);
                     break;
                 }
             };
@@ -135,13 +145,15 @@ impl ModelDownloader {
             let mut stream = response.bytes_stream();
             use futures_util::StreamExt;
             let start_time = std::time::Instant::now();
+            let mut last_log_time = std::time::Instant::now();
             let mut stream_success = true;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
                     Ok(chunk) => {
                         if let Err(e) = file.write_all(&chunk).await {
-                            last_error = format!("Error writing to disk: {}", e);
+                            last_error = format!("Error writing chunk to disk: {}", e);
+                            Logger::error(&last_error);
                             stream_success = false;
                             break;
                         }
@@ -153,6 +165,19 @@ impl ModelDownloader {
                         } else {
                             0.0
                         };
+
+                        // Log to file periodically every 5 seconds
+                        if last_log_time.elapsed().as_secs() >= 5 {
+                            Logger::info(&format!(
+                                "Streaming {}: {:.1}% ({:.1} MB / {:.1} MB) @ {:.1} MB/s",
+                                filename,
+                                percentage,
+                                downloaded_bytes as f32 / (1024.0 * 1024.0),
+                                total_bytes as f32 / (1024.0 * 1024.0),
+                                speed_mbps
+                            ));
+                            last_log_time = std::time::Instant::now();
+                        }
 
                         progress_callback(DownloadProgress {
                             model_id: filename.to_string(),
@@ -168,6 +193,7 @@ impl ModelDownloader {
                     }
                     Err(e) => {
                         last_error = format!("Stream interrupted: {}", e);
+                        Logger::warn(&last_error);
                         stream_success = false;
                         break;
                     }

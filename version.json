@@ -1,8 +1,9 @@
 {
-  "version": "0.3.15",
-  "build": 36,
-  "lastUpdated": "2026-08-16T19:46:00Z",
-  "notes": "Startup Deadlock Fix: resolved Mutex re-entrancy lock contention inside Logger::init that froze the Tauri setup thread on application launch; ensured instantaneous lock release and safe logging across all background threads."
+  "version": "0.3.16",
+  "build": 37,
+  "lastUpdated": "2026-08-16T20:11:00Z",
+  "notes": "Model Stream Download Fix: added browser User-Agent header, redirect policies, and TCP keepalives to prevent Hugging Face CDN stalls; added periodic live progress logging in logs/cinevault.log."
 }
+
 
 
