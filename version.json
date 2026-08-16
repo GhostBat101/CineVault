@@ -1,7 +1,8 @@
 {
-  "version": "0.3.14",
-  "build": 35,
-  "lastUpdated": "2026-08-16T19:28:00Z",
-  "notes": "CI Build Fix & JSX Hierarchy Repair: fixed unclosed div elements in SettingsView.tsx developer tab; resolved unused TypeScript definitions and updateVaultPath callback in ModelVaultView.tsx; verified zero-error tsc and vite production bundle."
+  "version": "0.3.15",
+  "build": 36,
+  "lastUpdated": "2026-08-16T19:46:00Z",
+  "notes": "Startup Deadlock Fix: resolved Mutex re-entrancy lock contention inside Logger::init that froze the Tauri setup thread on application launch; ensured instantaneous lock release and safe logging across all background threads."
 }
+
 

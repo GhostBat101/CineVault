@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 pub struct Logger {
-    log_file: Mutex<PathBuf>,
+    log_path: PathBuf,
 }
 
 static GLOBAL_LOGGER: Mutex<Option<Logger>> = Mutex::new(None);
@@ -13,15 +13,15 @@ static GLOBAL_LOGGER: Mutex<Option<Logger>> = Mutex::new(None);
 impl Logger {
     pub fn init<P: AsRef<Path>>(logs_dir: P) -> Result<(), String> {
         let dir = logs_dir.as_ref();
-        fs::create_dir_all(dir).map_err(|e| format!("Failed to create logs directory: {}", e))?;
+        let _ = fs::create_dir_all(dir);
         
         let log_path = dir.join("cinevault.log");
-        let logger = Logger {
-            log_file: Mutex::new(log_path),
-        };
+        let logger = Logger { log_path };
 
-        let mut global = GLOBAL_LOGGER.lock().map_err(|e| e.to_string())?;
-        *global = Some(logger);
+        {
+            let mut global = GLOBAL_LOGGER.lock().map_err(|e| e.to_string())?;
+            *global = Some(logger);
+        } // Lock is explicitly dropped here to prevent deadlocks!
         
         Self::log("INFO", "CineVault Logging System initialized successfully.");
         Ok(())
@@ -31,13 +31,17 @@ impl Logger {
         let timestamp = chrono_format_now();
         let formatted = format!("[{}] [{}] {}\n", timestamp, level, message);
 
-        if let Ok(guard) = GLOBAL_LOGGER.lock() {
-            if let Some(logger) = guard.as_ref() {
-                if let Ok(path) = logger.log_file.lock() {
-                    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&*path) {
-                        let _ = file.write_all(formatted.as_bytes());
-                    }
-                }
+        let path_opt = {
+            if let Ok(guard) = GLOBAL_LOGGER.lock() {
+                guard.as_ref().map(|l| l.log_path.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(path) = path_opt {
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = file.write_all(formatted.as_bytes());
             }
         }
         print!("{}", formatted);
@@ -69,7 +73,7 @@ fn chrono_format_now() -> String {
 
     let mut y = 1970;
     let mut d = days;
-    loop {
+    while d >= 365 {
         let leap = if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) { 1 } else { 0 };
         let days_in_year = 365 + leap;
         if d >= days_in_year {
@@ -81,7 +85,7 @@ fn chrono_format_now() -> String {
     }
     let leap = if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) { 1 } else { 0 };
     let month_days = [31, 28 + leap, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut m = 0;
+    let mut m = 1;
     for (idx, &md) in month_days.iter().enumerate() {
         if d >= md {
             d -= md;
@@ -90,7 +94,6 @@ fn chrono_format_now() -> String {
             break;
         }
     }
-    if m == 0 { m = 12; }
     let day = d + 1;
 
     format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC", y, m, day, hours, minutes, seconds)
