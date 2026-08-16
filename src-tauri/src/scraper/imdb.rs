@@ -54,10 +54,20 @@ impl ImdbScraper {
         if let Ok(resp) = client.get(&clean_url).send().await {
             if resp.status().is_success() {
                 if let Ok(response_text) = resp.text().await {
-                    if let Some(scraped) = Self::parse_json_ld(&imdb_id, &response_text).await {
+                    if let Some(mut scraped) = Self::parse_json_ld(&imdb_id, &response_text) {
+                        if scraped.synopsis.as_ref().map(|s| s.len() < 30).unwrap_or(true) {
+                            if let Some(wiki_text) = Self::fetch_wikipedia_summary(&scraped.title, scraped.year).await {
+                                scraped.synopsis = Some(wiki_text);
+                            }
+                        }
                         return Ok(scraped);
                     }
-                    if let Ok(scraped) = Self::parse_dom_fallback(&imdb_id, &response_text) {
+                    if let Ok(mut scraped) = Self::parse_dom_fallback(&imdb_id, &response_text) {
+                        if scraped.synopsis.as_ref().map(|s| s.len() < 30).unwrap_or(true) {
+                            if let Some(wiki_text) = Self::fetch_wikipedia_summary(&scraped.title, scraped.year).await {
+                                scraped.synopsis = Some(wiki_text);
+                            }
+                        }
                         return Ok(scraped);
                     }
                 }
@@ -177,7 +187,7 @@ impl ImdbScraper {
         Err(format!("Could not locate IMDb metadata for title: {}", imdb_id))
     }
 
-    async fn parse_json_ld(imdb_id: &str, html: &str) -> Option<ScrapedMedia> {
+    fn parse_json_ld(imdb_id: &str, html: &str) -> Option<ScrapedMedia> {
         let document = Html::parse_document(html);
         let selector = Selector::parse("script[type=\"application/ld+json\"]").ok()?;
 
@@ -187,7 +197,7 @@ impl ImdbScraper {
                 let schema_type = value.get("@type").and_then(|t| t.as_str()).unwrap_or("");
                 if schema_type == "Movie" || schema_type == "TVSeries" || schema_type == "TVEpisode" {
                     let title = value.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown Title").to_string();
-                    let mut synopsis = value.get("description").and_then(|d| d.as_str()).map(|s| s.to_string());
+                    let synopsis = value.get("description").and_then(|d| d.as_str()).map(|s| s.to_string());
                     let poster_url = value.get("image").and_then(|i| i.as_str()).map(|s| s.to_string());
                     
                     let media_type = if schema_type.contains("TV") || schema_type.contains("Series") {
@@ -241,13 +251,6 @@ impl ImdbScraper {
                                     avatar_url: actor.get("image").and_then(|i| i.as_str()).map(|s| s.to_string()),
                                 });
                             }
-                        }
-                    }
-
-                    // If JSON-LD description is short or missing, enhance with Wikipedia
-                    if synopsis.as_ref().map(|s| s.len() < 30).unwrap_or(true) {
-                        if let Some(wiki_text) = Self::fetch_wikipedia_summary(&title, year).await {
-                            synopsis = Some(wiki_text);
                         }
                     }
 

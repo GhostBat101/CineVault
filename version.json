@@ -1,9 +1,10 @@
 {
-  "version": "0.3.20",
-  "build": 41,
-  "lastUpdated": "2026-08-16T21:18:00Z",
-  "notes": "CI Desktop Build Fix: added urlencoding crate to Cargo.toml and fixed parse_dom_fallback synchronous call to guarantee successful CI compilation and installer asset publication on GitHub Actions."
+  "version": "0.3.21",
+  "build": 42,
+  "lastUpdated": "2026-08-16T22:14:00Z",
+  "notes": "CI Rust Thread Safety Fix: resolved non-Send ElementRef crossing await boundary in scraper module; guarantees 100% clean compilation on GitHub Actions Windows CI runner."
 }
+
 
 
 
