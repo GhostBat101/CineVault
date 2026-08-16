@@ -1,6 +1,6 @@
 {
-  "version": "0.3.3",
-  "build": 24,
-  "lastUpdated": "2026-08-16T15:12:25Z",
-  "notes": "Phase 14 Complete: Automated Vitest Test Suite, Narrative Beat Pacing Calculations, and VRAM Offload Allocator Math."
+  "version": "0.3.4",
+  "build": 25,
+  "lastUpdated": "2026-08-16T15:37:15Z",
+  "notes": "Phase 15 Complete: Windows Desktop Application Installer Packaging (.exe Setup Wizard via NSIS) & CI/CD Release Pipeline."
 }
