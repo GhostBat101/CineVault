@@ -13,6 +13,7 @@ import { DirectorSuite } from './components/director/DirectorSuite';
 import { ModelVaultView } from './components/vault/ModelVaultView';
 import { SettingsView } from './components/settings/SettingsView';
 import { Media } from './types';
+import versionData from '../version.json';
 
 export function App() {
   const { theme, setTheme } = useTheme('theme-obsidian');
@@ -45,7 +46,7 @@ export function App() {
       <Titlebar
         theme={theme}
         onThemeChange={setTheme}
-        version="v0.2.3"
+        version={`v${versionData.version}`}
       />
 
       {/* 2. Main Shell Layout */}
@@ -53,7 +54,11 @@ export function App() {
         {/* Collapsible Navigation Sidebar (240px <-> 68px) */}
         <Sidebar
           activeTab={activeTab}
-          onSelectTab={setActiveTab}
+          onSelectTab={(tab) => {
+            setActiveTab(tab);
+            if (tab === 'director') setActiveMode('director');
+            else if (tab === 'dashboard') setActiveMode('cinephile');
+          }}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
           onOpenIngest={() => setIsIngestModalOpen(true)}

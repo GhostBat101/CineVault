@@ -1,6 +1,6 @@
 {
-  "version": "0.3.10",
-  "build": 31,
-  "lastUpdated": "2026-08-16T17:55:00Z",
-  "notes": "Architectural overhaul: wired Tauri Rust backend to SQLite Database, Local AI Engine, and Hardware Monitor; replaced mock commands with real persistent states; fixed TS any casting bugs."
+  "version": "0.3.11",
+  "build": 32,
+  "lastUpdated": "2026-08-16T18:33:00Z",
+  "notes": "Brute-force serialization audit: added camelCase serde attributes across all native Rust modules (repository, AI engine, downloader, models, scraper, telemetry); enabled 100% portable installation mode placing DB and models directly in the executable directory; synchronized left navigation tabs with top mode switcher; added active media header in Director Suite."
 }

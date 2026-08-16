@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaRecord {
     pub id: String,
     pub imdb_id: Option<String>,
@@ -28,6 +29,7 @@ pub struct MediaRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CharacterRecord {
     pub id: String,
     pub media_id: String,
@@ -43,6 +45,7 @@ pub struct CharacterRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StoryArcRecord {
     pub id: String,
     pub media_id: String,
@@ -58,6 +61,7 @@ pub struct StoryArcRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BeatSheetRecord {
     pub id: String,
     pub media_id: String,
@@ -70,6 +74,7 @@ pub struct BeatSheetRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RelationshipRecord {
     pub id: String,
     pub media_id: String,
@@ -82,6 +87,7 @@ pub struct RelationshipRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CinematographyRecord {
     pub id: String,
     pub media_id: String,
@@ -97,6 +103,7 @@ pub struct CinematographyRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TimelineRecord {
     pub id: String,
     pub media_id: String,
@@ -110,6 +117,7 @@ pub struct TimelineRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoreNoteRecord {
     pub id: String,
     pub media_id: String,
@@ -124,6 +132,7 @@ pub struct LoreNoteRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FullDatabaseExport {
     pub version: String,
     pub exported_at: String,

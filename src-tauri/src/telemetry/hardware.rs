@@ -3,6 +3,7 @@ use sysinfo::System;
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TelemetryData {
     pub cpu_usage_percent: f32,
     pub ram_used_mb: u64,

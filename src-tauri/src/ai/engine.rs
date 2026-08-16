@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InferenceRequest {
     pub prompt: String,
     pub title: Option<String>,
@@ -17,6 +18,7 @@ pub struct InferenceRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InferenceResponse {
     pub generated_text: String,
     pub model_used: String,

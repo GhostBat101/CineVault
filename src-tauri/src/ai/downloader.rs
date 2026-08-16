@@ -5,6 +5,7 @@ use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DownloadProgress {
     pub model_id: String,
     pub downloaded_bytes: u64,

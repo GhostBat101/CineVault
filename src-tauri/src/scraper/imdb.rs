@@ -3,6 +3,7 @@ use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScrapedMedia {
     pub imdb_id: String,
     pub title: String,
@@ -18,6 +19,7 @@ pub struct ScrapedMedia {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScrapedCastMember {
     pub name: String,
     pub character_name: Option<String>,
