@@ -1,42 +1,88 @@
-# `@ghostbat101/cinevault-sdk`
+# 🎬 CineVault Developer SDK (`@ghostbat101/cinevault-sdk`)
 
-> Reusable TypeScript toolkit for narrative design, screenplay beat sheet structuring (Save the Cat! / Three-Act), character tension calculus, and Model Context Protocol (MCP) narrative auditing tools.
+A standalone TypeScript library for screenwriters, game designers, and AI application developers to calculate narrative beat structures, character tension graphs, and Model Context Protocol (MCP) tooling.
 
 ---
 
 ## 📦 Installation
 
+Published to GitHub Packages:
+
 ```bash
-# Via GitHub Packages npm registry
 npm install @ghostbat101/cinevault-sdk
 ```
 
 ---
 
-## 🚀 Quickstart
+## 🚀 Quick Start Examples
+
+### 1. Calculate Save the Cat! 15 Beat Timestamps
 
 ```typescript
-import { BeatSheetEngine, CharacterTensionMatrix } from '@ghostbat101/cinevault-sdk';
+import { BeatSheetEngine } from '@ghostbat101/cinevault-sdk';
 
-// 1. Structure a screenplay with Save the Cat! framework
+// Initialize with Save the Cat! framework
 const engine = new BeatSheetEngine('save-the-cat');
-engine.setBeatContent('Opening Image', 'Protagonist in rainy city...');
-engine.setBeatContent('Catalyst', 'A secret envelope arrives...');
 
-// 2. Track dynamic character tension
-const matrix = new CharacterTensionMatrix();
+// Calculate target page/minute timestamps for a 120-minute feature film
+const timeline = engine.calculateTimestamps(120);
+
+console.log(timeline);
+// [
+//   { name: 'Opening Image', targetMinute: 1, targetPage: 1, isCompleted: false },
+//   { name: 'Catalyst', targetMinute: 14, targetPage: 14, isCompleted: false },
+//   { name: 'Midpoint', targetMinute: 60, targetPage: 57, isCompleted: false },
+//   { name: 'All Is Lost', targetMinute: 90, targetPage: 86, isCompleted: false },
+//   ...
+// ]
+```
+
+### 2. Character Dynamic Tension Matrix & Friction Index
+
+```typescript
+import { CharacterTensionEngine } from '@ghostbat101/cinevault-sdk';
+
+const matrix = new CharacterTensionEngine();
+
+matrix.addCharacter({ id: 'c1', name: 'Dominic Cobb', roleType: 'protagonist' });
+matrix.addCharacter({ id: 'c2', name: 'Mal Cobb', roleType: 'antagonist' });
+matrix.addCharacter({ id: 'c3', name: 'Ariadne', roleType: 'deuteragonist' });
+
 matrix.setRelationship({
-  sourceId: 'hero',
-  targetId: 'rival',
-  relationType: 'betrayal',
-  tensionScore: 9,
-  notes: 'Former allies separated by blood feud'
+  sourceCharacterId: 'c1',
+  targetCharacterId: 'c2',
+  relationshipType: 'Tragic Lovers / Projection',
+  tensionScore: 10,
 });
 
-console.log('Average Tension:', matrix.calculateAverageTension());
+matrix.setRelationship({
+  sourceCharacterId: 'c1',
+  targetCharacterId: 'c3',
+  relationshipType: 'Mentor / Subconscious Anchor',
+  tensionScore: 4,
+});
+
+// Calculate statistical tension metrics
+const summary = matrix.calculateTensionSummary();
+console.log(summary);
+// {
+//   averageTensionScore: 7.0,
+//   highestTensionPair: { char1: 'Dominic Cobb', char2: 'Mal Cobb', score: 10, dynamic: '...' },
+//   totalRelationshipLinks: 2
+// }
+```
+
+### 3. Model Context Protocol (MCP) Tool Integration
+
+```typescript
+import { CINEVAULT_MCP_TOOLS } from '@ghostbat101/cinevault-sdk';
+
+// Register standard tools in your MCP server
+console.log(CINEVAULT_MCP_TOOLS);
 ```
 
 ---
 
 ## 📄 License
-MIT License - Open for developers, toolsmiths, and narrative researchers.
+
+MIT Open Source License.

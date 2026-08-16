@@ -1,24 +1,44 @@
-export type BeatSheetFramework = 'save-the-cat' | 'three-act' | 'dan-harmon' | 'heros-journey';
+export type BeatSheetFramework = 'save-the-cat' | 'three-act' | 'heros-journey' | 'dan-harmon-circle';
 
 export interface BeatTemplate {
   name: string;
   targetPercentage: number;
+  act?: 'Act 1' | 'Act 2' | 'Act 3';
   description: string;
 }
 
-export interface CharacterRelation {
-  sourceId: string;
-  targetId: string;
-  relationType: 'allies' | 'rivals' | 'betrayal' | 'unrequited_love' | 'subordinate' | 'mentor';
-  tensionScore: number; // 1 to 10
+export interface CalculatedBeatTimestamp {
+  name: string;
+  targetPercentage: number;
+  targetMinute: number;
+  targetPage: number;
+  description: string;
+  userContent?: string;
+  isCompleted: boolean;
+}
+
+export interface SDKCharacter {
+  id: string;
+  name: string;
+  roleType: 'protagonist' | 'antagonist' | 'deuteragonist' | 'supporting' | 'cameo';
+  motivation?: string;
+}
+
+export interface SDKRelationship {
+  sourceCharacterId: string;
+  targetCharacterId: string;
+  relationshipType: string;
+  tensionScore: number; // 1 - 10
   notes?: string;
 }
 
-export interface NarrativeProject {
-  id: string;
-  title: string;
-  logline: string;
-  framework: BeatSheetFramework;
-  beats: Record<string, string>;
-  relationships: CharacterRelation[];
+export interface TensionIndexSummary {
+  averageTensionScore: number;
+  highestTensionPair?: {
+    char1: string;
+    char2: string;
+    score: number;
+    dynamic: string;
+  };
+  totalRelationshipLinks: number;
 }

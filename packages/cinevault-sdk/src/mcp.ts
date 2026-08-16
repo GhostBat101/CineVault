@@ -1,45 +1,65 @@
-import { BeatSheetEngine } from './beats';
-import { CharacterTensionMatrix } from './matrix';
-
-export interface McpToolDefinition {
+export interface MCPToolDefinition {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
-}
-
-export const CINEVAULT_MCP_TOOLS: McpToolDefinition[] = [
-  {
-    name: 'analyze_beat_sheet_pacing',
-    description: 'Calculates narrative pacing tension across screenplay beats.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        beats: { type: 'object', description: 'Map of beat names to scene summaries' }
-      },
-      required: ['beats']
-    }
-  },
-  {
-    name: 'audit_character_lore_continuity',
-    description: 'Scans character motivations against scene actions to identify plot holes and contradictions.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        characterBackstories: { type: 'array', items: { type: 'string' } },
-        sceneEvents: { type: 'array', items: { type: 'string' } }
-      },
-      required: ['characterBackstories', 'sceneEvents']
-    }
-  }
-];
-
-export function createCinevaultMcpHandler() {
-  const beatEngine = new BeatSheetEngine();
-  const matrix = new CharacterTensionMatrix();
-
-  return {
-    tools: CINEVAULT_MCP_TOOLS,
-    beatEngine,
-    matrix
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, any>;
+    required?: string[];
   };
 }
+
+export const CINEVAULT_MCP_TOOLS: MCPToolDefinition[] = [
+  {
+    name: 'cinevault_calculate_beat_timestamps',
+    description: 'Calculate page numbers, minute timestamps, and 3-act boundaries for Save the Cat! 15 beats based on total runtime.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        totalRuntimeMinutes: {
+          type: 'number',
+          description: 'Total target runtime in minutes (e.g. 110)',
+        },
+        framework: {
+          type: 'string',
+          enum: ['save-the-cat', 'three-act'],
+          description: 'Narrative framework to calculate',
+        },
+      },
+      required: ['totalRuntimeMinutes'],
+    },
+  },
+  {
+    name: 'cinevault_calculate_character_friction',
+    description: 'Calculate character tension index and identify highest-friction relationship pairs in a screenplay or lore world.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        characters: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+            },
+            required: ['id', 'name'],
+          },
+        },
+        relationships: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              sourceCharacterId: { type: 'string' },
+              targetCharacterId: { type: 'string' },
+              relationshipType: { type: 'string' },
+              tensionScore: { type: 'number' },
+            },
+            required: ['sourceCharacterId', 'targetCharacterId', 'tensionScore'],
+          },
+        },
+      },
+      required: ['characters', 'relationships'],
+    },
+  },
+];
