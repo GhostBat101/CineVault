@@ -158,6 +158,27 @@ export interface HardwareTelemetry {
   totalGpuLayers: number;
 }
 
+export interface ModelStatusItem {
+  id: string;
+  name: string;
+  parameterSize: string;
+  quantization: string;
+  fileSizeMb: number;
+  description: string;
+  filename: string;
+  isInstalled: boolean;
+  isActive: boolean;
+  localPath?: string;
+  downloadUrl: string;
+  sha256: string;
+}
+
+export interface ModelVaultStatus {
+  vaultPath: string;
+  activeModelId: string;
+  models: ModelStatusItem[];
+}
+
 export interface AppSettings {
   theme: ThemeName;
   defaultWorkspaceMode: 'cinephile' | 'director';
@@ -174,3 +195,4 @@ export interface AppSettings {
   sidebarAutoCollapse: boolean;
   uiScaling: number;
 }
+

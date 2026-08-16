@@ -7,6 +7,7 @@ interface NavbarProps {
   activeMode: 'cinephile' | 'director';
   onToggleMode: (mode: 'cinephile' | 'director') => void;
   totalMediaCount: number;
+  activeTab?: 'dashboard' | 'director' | 'model-vault' | 'settings';
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -15,6 +16,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeMode,
   onToggleMode,
   totalMediaCount,
+  activeTab = 'dashboard',
 }) => {
   return (
     <nav
@@ -29,49 +31,59 @@ export const Navbar: React.FC<NavbarProps> = ({
         userSelect: 'none',
       }}
     >
-      {/* Search Input Bar */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          backgroundColor: 'var(--bg-tertiary)',
-          border: '1px solid var(--border-medium)',
-          borderRadius: 'var(--radius-sm)',
-          padding: '6px 12px',
-          width: '100%',
-          maxWidth: '380px',
-        }}
-      >
-        <Search size={16} color="var(--text-muted)" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search by title, director, genre, or character (Ctrl+K)..."
+      {/* Search Input Bar (Shown strictly on Dashboard) or Contextual Breadcrumb */}
+      {activeTab === 'dashboard' ? (
+        <div
           style={{
-            background: 'transparent',
-            border: 'none',
-            outline: 'none',
-            color: 'var(--text-primary)',
-            fontSize: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            backgroundColor: 'var(--bg-tertiary)',
+            border: '1px solid var(--border-medium)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '6px 12px',
             width: '100%',
-            fontFamily: 'var(--font-sans)',
-          }}
-        />
-        <span
-          style={{
-            fontSize: '10px',
-            color: 'var(--text-muted)',
-            fontFamily: 'var(--font-mono)',
-            backgroundColor: 'var(--bg-primary)',
-            padding: '2px 5px',
-            borderRadius: 'var(--radius-xs)',
+            maxWidth: '380px',
           }}
         >
-          Ctrl+K
-        </span>
-      </div>
+          <Search size={16} color="var(--text-muted)" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search by title, director, genre, or character (Ctrl+K)..."
+            style={{
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              color: 'var(--text-primary)',
+              fontSize: '12px',
+              width: '100%',
+              fontFamily: 'var(--font-sans)',
+            }}
+          />
+          <span
+            style={{
+              fontSize: '10px',
+              color: 'var(--text-muted)',
+              fontFamily: 'var(--font-mono)',
+              backgroundColor: 'var(--bg-primary)',
+              padding: '2px 5px',
+              borderRadius: 'var(--radius-xs)',
+            }}
+          >
+            Ctrl+K
+          </span>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+            {activeTab === 'director' && "Director's Suite Mode"}
+            {activeTab === 'model-vault' && 'Local AI Model Vault'}
+            {activeTab === 'settings' && 'App Settings & Database Vault'}
+          </span>
+        </div>
+      )}
 
       {/* Mode Switcher & Stats */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>

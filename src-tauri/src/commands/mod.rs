@@ -1,7 +1,8 @@
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use crate::telemetry::hardware::{TelemetryData, HardwareMonitor};
 use crate::scraper::imdb::{ScrapedMedia, ImdbScraper};
-use crate::ai::engine::{InferenceRequest, InferenceResponse, LocalAIEngine};
+use crate::ai::engine::{InferenceRequest, InferenceResponse, LocalAIEngine, ModelVaultStatus};
+use crate::ai::downloader::ModelDownloader;
 use crate::db::repository::{MediaRecord, FullDatabaseExport, Repository};
 
 #[tauri::command]
@@ -22,6 +23,43 @@ pub async fn generate_ai_summary(
     engine: State<'_, LocalAIEngine>
 ) -> Result<InferenceResponse, String> {
     engine.run_inference(request).await
+}
+
+#[tauri::command]
+pub async fn get_model_vault_status(engine: State<'_, LocalAIEngine>) -> Result<ModelVaultStatus, String> {
+    Ok(engine.get_vault_status())
+}
+
+#[tauri::command]
+pub async fn set_active_ai_model(model_id: String, engine: State<'_, LocalAIEngine>) -> Result<bool, String> {
+    engine.set_active_model(&model_id);
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn download_ai_model(
+    model_id: String,
+    engine: State<'_, LocalAIEngine>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    let supported = engine.get_supported_models();
+    let meta = supported.into_iter().find(|m| m.id == model_id)
+        .ok_or_else(|| format!("Unknown model ID: {}", model_id))?;
+    
+    let vault_dir = engine.get_vault_dir();
+    let handle = app_handle.clone();
+    
+    let target = ModelDownloader::download_gguf_model(
+        &meta.download_url,
+        &vault_dir,
+        &meta.filename,
+        &meta.sha256_checksum,
+        move |progress| {
+            let _ = handle.emit("model_download_progress", progress);
+        },
+    ).await?;
+
+    Ok(target.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -52,7 +90,6 @@ pub async fn import_database_json(
     let parsed: FullDatabaseExport = serde_json::from_str(&json_content)
         .map_err(|e| format!("Invalid JSON schema: {}", e))?;
     
-    // In a full implementation, we'd loop through parsed.media and insert them.
     for media in parsed.media {
         let _ = repo.insert_media(&media);
     }

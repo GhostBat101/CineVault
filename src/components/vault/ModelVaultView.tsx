@@ -1,115 +1,117 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 import { Cpu, Download, CheckCircle, FolderOpen, HardDrive, ShieldCheck, AlertCircle } from 'lucide-react';
 import { useTelemetry } from '../../hooks/useTelemetry';
-
-interface GGUFModelItem {
-  id: string;
-  name: string;
-  parameters: string;
-  quant: string;
-  fileSizeMb: number;
-  vramEstimatedMb: number;
-  description: string;
-  isInstalled: boolean;
-  isActive: boolean;
-  sha256: string;
-}
-
-const INITIAL_MODELS: GGUFModelItem[] = [
-  {
-    id: 'llama-3.2-1b-instruct-q4km',
-    name: 'Llama 3.2 1B Instruct',
-    parameters: '1.23 Billion',
-    quant: 'Q4_K_M',
-    fileSizeMb: 808,
-    vramEstimatedMb: 920,
-    description: 'Ultra-fast, ultra-lightweight SLM engineered for fast narrative summaries and screenplay beat brainstorming under tight VRAM constraints.',
-    isInstalled: true,
-    isActive: true,
-    sha256: '5723b7b8449c25f4a13f70e704874c721c5f3e46c7ad7f5f745778dc652c7ab9',
-  },
-  {
-    id: 'qwen-2.5-1.5b-instruct-q4km',
-    name: 'Qwen 2.5 1.5B Instruct',
-    parameters: '1.54 Billion',
-    quant: 'Q4_K_M',
-    fileSizeMb: 1110,
-    vramEstimatedMb: 1240,
-    description: 'High-reasoning capacity small language model specialized for complex lore continuity checks, character tension analysis, and nuance.',
-    isInstalled: false,
-    isActive: false,
-    sha256: '7c39ad0030a5975db35824b0718d7f999901416bfbf6ff0dbd63f0d463b27b9c',
-  },
-];
+import { api, isTauri } from '../../services/api';
+import { ModelStatusItem } from '../../types';
 
 export const ModelVaultView: React.FC = () => {
   const telemetry = useTelemetry(1000);
-  const [models, setModels] = useState<GGUFModelItem[]>(INITIAL_MODELS);
-  const [vaultPath, setVaultPath] = useState<string>(() => {
-    return localStorage.getItem('cinevault_model_vault_path') || './models';
-  });
+  const [models, setModels] = useState<ModelStatusItem[]>([]);
+  const [vaultPath, setVaultPath] = useState<string>('./models');
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [downloadSpeed, setDownloadSpeed] = useState<string>('0.0');
+  const [isLoadingStatus, setIsLoadingStatus] = useState<boolean>(true);
 
-  const updateVaultPath = (newPath: string) => {
-    setVaultPath(newPath);
+  const fetchVaultStatus = async () => {
     try {
-      localStorage.setItem('cinevault_model_vault_path', newPath);
-    } catch (e) {
-      console.warn('Could not persist model vault path:', e);
+      const status = await api.getModelVaultStatus();
+      if (status && status.models) {
+        setModels(status.models);
+        if (status.vaultPath) setVaultPath(status.vaultPath);
+      }
+    } catch (err) {
+      console.error('Failed to get model vault status:', err);
+    } finally {
+      setIsLoadingStatus(false);
     }
   };
+
+  useEffect(() => {
+    fetchVaultStatus();
+
+    let unlisten: (() => void) | undefined;
+    if (isTauri()) {
+      import('@tauri-apps/api/event').then(({ listen }) => {
+        listen<any>('model_download_progress', (event) => {
+          const payload = event.payload;
+          if (payload) {
+            setDownloadProgress(Math.round(payload.percentage || 0));
+            setDownloadSpeed((payload.speedMbps || 0).toFixed(1));
+            if (payload.isCompleted) {
+              setDownloadingModelId(null);
+              fetchVaultStatus();
+            }
+          }
+        }).then((unsub) => {
+          unlisten = unsub;
+        });
+      }).catch((e) => {
+        console.warn('Could not bind download listener:', e);
+      });
+    }
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // Custom Model Import Modal State
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [customPath, setCustomPath] = useState('');
   const [customName, setCustomName] = useState('');
 
-  const activeModel = models.find((m) => m.isActive) || models[0];
-
-  const handleStartDownload = (modelId: string) => {
-    setDownloadingModelId(modelId);
-    setDownloadProgress(0);
-    setDownloadSpeed('14.8');
-
-    let current = 0;
-    const interval = setInterval(() => {
-      current += 10;
-      setDownloadProgress(current);
-      if (current >= 100) {
-        clearInterval(interval);
-        setDownloadingModelId(null);
-        setModels((prev) =>
-          prev.map((m) => (m.id === modelId ? { ...m, isInstalled: true } : m))
-        );
-      }
-    }, 400);
+  const activeModel = models.find((m) => m.isActive) || models[0] || {
+    name: 'No Active Model',
+    vramEstimatedMb: 0,
   };
 
-  const handleActivateModel = (modelId: string) => {
-    setModels((prev) =>
-      prev.map((m) => ({
-        ...m,
-        isActive: m.id === modelId,
-      }))
-    );
+  const handleStartDownload = async (modelId: string) => {
+    setDownloadingModelId(modelId);
+    setDownloadProgress(0);
+    setDownloadSpeed('0.0');
+
+    try {
+      await api.downloadAiModel(modelId);
+      await fetchVaultStatus();
+    } catch (err: any) {
+      console.error('[Model Download Error]', err);
+      alert(`Model download error: ${err?.message || err}`);
+    } finally {
+      setDownloadingModelId(null);
+    }
+  };
+
+  const handleActivateModel = async (modelId: string) => {
+    try {
+      await api.setActiveAiModel(modelId);
+      setModels((prev) =>
+        prev.map((m) => ({
+          ...m,
+          isActive: m.id === modelId,
+        }))
+      );
+    } catch (err) {
+      console.error('[Activate Model Error]', err);
+    }
   };
 
   const handleImportCustom = () => {
     if (!customName.trim()) return;
-    const customItem: GGUFModelItem = {
+    const customItem: ModelStatusItem = {
       id: `custom_${Date.now()}`,
       name: customName,
-      parameters: 'Custom',
-      quant: 'GGUF',
+      parameterSize: 'Custom',
+      quantization: 'GGUF',
       fileSizeMb: 1200,
-      vramEstimatedMb: 1350,
       description: `User-imported local model located at: ${customPath || 'custom_model.gguf'}`,
+      filename: customPath || 'custom_model.gguf',
       isInstalled: true,
       isActive: false,
+      localPath: customPath,
+      downloadUrl: '',
       sha256: 'custom_user_provided',
     };
     setModels((prev) => [...prev, customItem]);
@@ -285,9 +287,9 @@ export const ModelVaultView: React.FC = () => {
                         {model.name}
                       </h4>
                       <div style={{ display: 'flex', gap: '6px', fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                        <span>{model.parameters}</span>
+                        <span>{model.parameterSize}</span>
                         <span>•</span>
-                        <span>{model.quant}</span>
+                        <span>{model.quantization}</span>
                         <span>•</span>
                         <span>{model.fileSizeMb} MB</span>
                       </div>
@@ -344,7 +346,7 @@ export const ModelVaultView: React.FC = () => {
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <Cpu size={13} color="var(--accent)" />
-                      <span>~{model.vramEstimatedMb} MB VRAM</span>
+                      <span>~{Math.round(model.fileSizeMb * 1.15)} MB VRAM</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <ShieldCheck size={13} color="var(--status-success)" />

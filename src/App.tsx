@@ -77,6 +77,7 @@ export function App() {
               else setActiveTab('dashboard');
             }}
             totalMediaCount={mediaList.length}
+            activeTab={activeTab}
           />
 
           {/* Main View Container with Error Boundary */}
@@ -107,6 +108,8 @@ export function App() {
               {activeTab === 'director' && (
                 <DirectorSuite
                   media={selectedMedia}
+                  mediaList={mediaList}
+                  onSelectMedia={setSelectedMedia}
                 />
               )}
 

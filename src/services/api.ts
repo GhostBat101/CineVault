@@ -1,6 +1,7 @@
 import {
   Media,
   HardwareTelemetry,
+  ModelVaultStatus,
 } from '../types';
 
 // Detect whether the app is executing inside Tauri Webview or standard Browser
@@ -164,6 +165,49 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       } as T;
     }
 
+    case 'get_model_vault_status': {
+      return {
+        vaultPath: './models',
+        activeModelId: 'llama-3.2-1b-instruct-q4km',
+        models: [
+          {
+            id: 'llama-3.2-1b-instruct-q4km',
+            name: 'Llama 3.2 1B Instruct',
+            parameterSize: '1.23B',
+            quantization: 'Q4_K_M',
+            fileSizeMb: 808,
+            description: 'Ultra-fast, ultra-lightweight SLM engineered for fast narrative summaries and screenplay beat brainstorming under tight VRAM constraints.',
+            filename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+            isInstalled: false,
+            isActive: true,
+            downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+            sha256: '5723b7b8449c25f4a13f70e704874c721c5f3e46c7ad7f5f745778dc652c7ab9',
+          },
+          {
+            id: 'qwen-2.5-1.5b-instruct-q4km',
+            name: 'Qwen 2.5 1.5B Instruct',
+            parameterSize: '1.54B',
+            quantization: 'Q4_K_M',
+            fileSizeMb: 1110,
+            description: 'High-reasoning capacity small language model specialized for complex lore continuity checks, character tension analysis, and nuance.',
+            filename: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
+            isInstalled: false,
+            isActive: false,
+            downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf',
+            sha256: '7c39ad0030a5975db35824b0718d7f999901416bfbf6ff0dbd63f0d463b27b9c',
+          },
+        ],
+      } as T;
+    }
+
+    case 'set_active_ai_model': {
+      return true as T;
+    }
+
+    case 'download_ai_model': {
+      return './models/downloaded_model.gguf' as T;
+    }
+
     case 'save_media_entry': {
       const media = args?.media as Media;
       if (media) {
@@ -189,7 +233,10 @@ export const api = {
   extractImdb: (imdbUrl: string) => tauriInvoke<any>('extract_imdb', { imdb_url: imdbUrl, imdbUrl }),
   saveMedia: (media: Media) => tauriInvoke<string>('save_media_entry', { media }),
 
-  // Local AI Generation
+  // Local AI Generation & Model Vault
+  getModelVaultStatus: () => tauriInvoke<ModelVaultStatus>('get_model_vault_status'),
+  setActiveAiModel: (modelId: string) => tauriInvoke<boolean>('set_active_ai_model', { modelId, model_id: modelId }),
+  downloadAiModel: (modelId: string) => tauriInvoke<string>('download_ai_model', { modelId, model_id: modelId }),
   generateAISummary: (prompt: string, temperature = 0.7, maxTokens = 512) =>
     tauriInvoke<{ generatedText: string; modelUsed: string; totalTokens: number }>('generate_ai_summary', {
       request: { prompt, temperature, max_tokens: maxTokens },

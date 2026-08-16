@@ -5,29 +5,36 @@ import { TensionMatrixView } from './TensionMatrixView';
 import { LoreNotesView } from './LoreNotesView';
 import { ListTree, Users, BookOpen } from 'lucide-react';
 
+import { Clapperboard } from 'lucide-react';
+
 interface DirectorSuiteProps {
   media: Media | null;
+  mediaList?: Media[];
+  onSelectMedia?: (media: Media) => void;
 }
 
 export const DirectorSuite: React.FC<DirectorSuiteProps> = ({
   media,
+  mediaList = [],
+  onSelectMedia,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'beats' | 'tension-matrix' | 'lore-notes'>('beats');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Sub-navigation Tabs */}
+      {/* Sub-navigation Tabs & Directing Context Switcher */}
       <div
         style={{
           display: 'flex',
-          gap: '8px',
+          gap: '12px',
           paddingBottom: '12px',
           borderBottom: '1px solid var(--border-subtle)',
           alignItems: 'center',
           justifyContent: 'space-between',
+          flexWrap: 'wrap',
         }}
       >
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
             onClick={() => setActiveSubTab('beats')}
             style={{
@@ -92,13 +99,42 @@ export const DirectorSuite: React.FC<DirectorSuiteProps> = ({
           </button>
         </div>
 
-        <div style={{ padding: '0 16px', borderLeft: '1px solid var(--border-medium)' }}>
-          <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            Currently Directing:{' '}
-            <strong style={{ color: 'var(--text-primary)' }}>
-              {media ? media.title : 'Global Sandbox (No Title Selected)'}
-            </strong>
+        {/* Title Switcher Dropdown */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '4px 12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+          <Clapperboard size={15} color="var(--accent)" />
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            Active Title:
           </span>
+          <select
+            value={media?.id || ''}
+            onChange={(e) => {
+              const selected = mediaList.find((m) => m.id === e.target.value);
+              if (selected && onSelectMedia) {
+                onSelectMedia(selected);
+              }
+            }}
+            style={{
+              backgroundColor: 'var(--bg-secondary)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-medium)',
+              borderRadius: 'var(--radius-xs)',
+              padding: '4px 10px',
+              fontSize: '12px',
+              fontWeight: 600,
+              outline: 'none',
+              cursor: 'pointer',
+              maxWidth: '220px',
+            }}
+          >
+            <option value="" disabled={!!media}>
+              {media ? '-- Switch Title --' : '-- Select a Title to Direct --'}
+            </option>
+            {mediaList.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.title} {m.year ? `(${m.year})` : ''}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

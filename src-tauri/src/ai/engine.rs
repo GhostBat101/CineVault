@@ -26,6 +26,31 @@ pub struct InferenceResponse {
     pub generation_time_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStatusItem {
+    pub id: String,
+    pub name: String,
+    pub parameter_size: String,
+    pub quantization: String,
+    pub file_size_mb: u64,
+    pub description: String,
+    pub filename: String,
+    pub is_installed: bool,
+    pub is_active: bool,
+    pub local_path: Option<String>,
+    pub download_url: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelVaultStatus {
+    pub vault_path: String,
+    pub active_model_id: String,
+    pub models: Vec<ModelStatusItem>,
+}
+
 pub struct LocalAIEngine {
     vault_dir: Mutex<PathBuf>,
     active_model_id: Mutex<String>,
@@ -56,6 +81,46 @@ impl LocalAIEngine {
 
     pub fn get_supported_models(&self) -> Vec<ModelMetadata> {
         get_supported_models()
+    }
+
+    pub fn get_vault_status(&self) -> ModelVaultStatus {
+        let vault_dir = self.get_vault_dir();
+        let active_id = self.active_model_id.lock().unwrap().clone();
+        let supported = self.get_supported_models();
+
+        let mut items = Vec::new();
+        for meta in supported {
+            let model_file = vault_dir.join(&meta.filename);
+            let exists = model_file.exists();
+            let is_active = meta.id == active_id;
+
+            let desc = if meta.id.contains("llama") {
+                "Ultra-fast, ultra-lightweight SLM engineered for fast narrative summaries and screenplay beat brainstorming under tight VRAM constraints.".to_string()
+            } else {
+                "High-reasoning capacity small language model specialized for complex lore continuity checks, character tension analysis, and nuance.".to_string()
+            };
+
+            items.push(ModelStatusItem {
+                id: meta.id.clone(),
+                name: meta.name.clone(),
+                parameter_size: meta.parameter_size.clone(),
+                quantization: meta.quantization.clone(),
+                file_size_mb: meta.file_size_mb,
+                description: desc,
+                filename: meta.filename.clone(),
+                is_installed: exists,
+                is_active,
+                local_path: if exists { Some(model_file.to_string_lossy().to_string()) } else { None },
+                download_url: meta.download_url.clone(),
+                sha256: meta.sha256_checksum.clone(),
+            });
+        }
+
+        ModelVaultStatus {
+            vault_path: vault_dir.to_string_lossy().to_string(),
+            active_model_id: active_id,
+            models: items,
+        }
     }
 
     pub async fn run_inference(&self, req: InferenceRequest) -> Result<InferenceResponse, String> {
