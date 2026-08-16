@@ -133,3 +133,24 @@ pub async fn import_database_json(
     
     Ok(true)
 }
+
+#[tauri::command]
+pub async fn app_minimize(window: tauri::Window) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn app_maximize(window: tauri::Window) -> Result<(), String> {
+    if window.is_maximized().map_err(|e| e.to_string())? {
+        window.unmaximize().map_err(|e| e.to_string())
+    } else {
+        window.maximize().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn app_close(window: tauri::Window) -> Result<(), String> {
+    crate::logger::Logger::info("Closing CineVault via titlebar close button.");
+    let _ = window.destroy();
+    std::process::exit(0);
+}

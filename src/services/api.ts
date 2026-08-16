@@ -285,4 +285,9 @@ export const api = {
       throw new Error(`Failed to check for updates: ${err?.message || err}`);
     }
   },
+
+  // Window Controls (Native Frameless Chrome)
+  minimizeWindow: () => tauriInvoke<void>('app_minimize'),
+  maximizeWindow: () => tauriInvoke<void>('app_maximize'),
+  closeWindow: () => tauriInvoke<void>('app_close'),
 };

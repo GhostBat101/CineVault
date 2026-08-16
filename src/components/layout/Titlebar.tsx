@@ -1,6 +1,6 @@
 import React from 'react';
 import { ThemeName } from '../../types';
-import { isTauri } from '../../services/api';
+import { api } from '../../services/api';
 
 interface TitlebarProps {
   theme: ThemeName;
@@ -14,23 +14,26 @@ export const Titlebar: React.FC<TitlebarProps> = ({
   version,
 }) => {
   const handleMinimize = async () => {
-    if (isTauri()) {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      getCurrentWindow().minimize();
+    try {
+      await api.minimizeWindow();
+    } catch (e) {
+      console.warn('Could not minimize window:', e);
     }
   };
 
   const handleMaximize = async () => {
-    if (isTauri()) {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      getCurrentWindow().toggleMaximize();
+    try {
+      await api.maximizeWindow();
+    } catch (e) {
+      console.warn('Could not maximize window:', e);
     }
   };
 
   const handleClose = async () => {
-    if (isTauri()) {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      getCurrentWindow().close();
+    try {
+      await api.closeWindow();
+    } catch (e) {
+      console.warn('Could not close window:', e);
     }
   };
 

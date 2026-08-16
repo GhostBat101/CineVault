@@ -51,7 +51,10 @@ pub fn run() {
             commands::save_media_entry,
             commands::get_all_media,
             commands::export_database_json,
-            commands::import_database_json
+            commands::import_database_json,
+            commands::app_minimize,
+            commands::app_maximize,
+            commands::app_close
         ])
         .run(tauri::generate_context!())
         .expect("error while running CineVault desktop application");

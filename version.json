@@ -1,9 +1,10 @@
 {
-  "version": "0.3.16",
-  "build": 37,
-  "lastUpdated": "2026-08-16T20:11:00Z",
-  "notes": "Model Stream Download Fix: added browser User-Agent header, redirect policies, and TCP keepalives to prevent Hugging Face CDN stalls; added periodic live progress logging in logs/cinevault.log."
+  "version": "0.3.17",
+  "build": 38,
+  "lastUpdated": "2026-08-16T20:16:00Z",
+  "notes": "Titlebar Window Controls Fix: wired native Rust IPC commands (app_minimize, app_maximize, app_close) for seamless window closing, maximizing, and minimizing in frameless window mode."
 }
+
 
 
 
