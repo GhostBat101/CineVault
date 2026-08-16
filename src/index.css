@@ -205,3 +205,22 @@ h1, h2, h3, h4, h5, h6 {
   flex-direction: column;
   position: relative;
 }
+
+/* Windows 11 Snap Layout & Responsive Breakpoints */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width-expanded: 200px;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --sidebar-width-expanded: 68px;
+    --hud-height: 28px;
+  }
+  
+  .main-content {
+    padding: 12px !important;
+  }
+}
+

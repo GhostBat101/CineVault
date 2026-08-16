@@ -1,6 +1,6 @@
 {
-  "version": "0.3.1",
-  "build": 22,
-  "lastUpdated": "2026-08-16T15:06:30Z",
-  "notes": "Phase 12 Complete: Enhanced @ghostbat101/cinevault-sdk with BeatSheetEngine, CharacterTensionEngine, and MCP Tooling."
+  "version": "0.3.2",
+  "build": 23,
+  "lastUpdated": "2026-08-16T15:09:35Z",
+  "notes": "Phase 13 Complete: Windows 11 Responsive Snap Layout Boundaries, Media Queries, and Error Boundary Isolation."
 }
