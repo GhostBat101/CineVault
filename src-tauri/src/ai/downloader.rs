@@ -145,6 +145,7 @@ impl ModelDownloader {
             let mut stream = response.bytes_stream();
             use futures_util::StreamExt;
             let start_time = std::time::Instant::now();
+            let mut last_emit_time = std::time::Instant::now();
             let mut last_log_time = std::time::Instant::now();
             let mut stream_success = true;
 
@@ -179,17 +180,21 @@ impl ModelDownloader {
                             last_log_time = std::time::Instant::now();
                         }
 
-                        progress_callback(DownloadProgress {
-                            model_id: filename.to_string(),
-                            downloaded_bytes,
-                            total_bytes,
-                            percentage,
-                            speed_mbps,
-                            is_completed: false,
-                            error: None,
-                            attempt,
-                            max_attempts: max_retries,
-                        });
+                        // Throttle IPC emission to ~12 updates per second (80ms) to prevent IPC message queue congestion
+                        if last_emit_time.elapsed().as_millis() >= 80 {
+                            progress_callback(DownloadProgress {
+                                model_id: filename.to_string(),
+                                downloaded_bytes,
+                                total_bytes,
+                                percentage,
+                                speed_mbps,
+                                is_completed: false,
+                                error: None,
+                                attempt,
+                                max_attempts: max_retries,
+                            });
+                            last_emit_time = std::time::Instant::now();
+                        }
                     }
                     Err(e) => {
                         last_error = format!("Stream interrupted: {}", e);

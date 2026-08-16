@@ -23,12 +23,19 @@ export function useAISummary(options?: UseAISummaryOptions) {
         listen<any>('model_download_progress', (event) => {
           const payload = event.payload;
           if (payload) {
-            setDownloadProgress(Math.round(payload.percentage || 0));
-            setDownloadSpeed((payload.speedMbps || 0).toFixed(1));
-            if (payload.attempt && payload.maxAttempts) {
-              setDownloadAttempt({ attempt: payload.attempt, max: payload.maxAttempts });
+            const pct = Math.min(100, Math.max(0, Math.round(payload.percentage ?? payload.percent ?? 0)));
+            const speedVal = payload.speedMbps ?? payload.speed_mbps ?? 0;
+            const isDone = payload.isCompleted ?? payload.is_completed ?? (pct >= 100);
+
+            setDownloadProgress(pct);
+            setDownloadSpeed(Number(speedVal).toFixed(1));
+
+            const attemptVal = payload.attempt ?? payload.currentAttempt;
+            const maxVal = payload.maxAttempts ?? payload.max_attempts;
+            if (attemptVal && maxVal) {
+              setDownloadAttempt({ attempt: attemptVal, max: maxVal });
             }
-            if (payload.isCompleted) {
+            if (isDone) {
               setDownloadProgress(null);
               setDownloadAttempt(null);
             }

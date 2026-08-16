@@ -1,9 +1,10 @@
 {
-  "version": "0.3.17",
-  "build": 38,
-  "lastUpdated": "2026-08-16T20:16:00Z",
-  "notes": "Titlebar Window Controls Fix: wired native Rust IPC commands (app_minimize, app_maximize, app_close) for seamless window closing, maximizing, and minimizing in frameless window mode."
+  "version": "0.3.18",
+  "build": 39,
+  "lastUpdated": "2026-08-16T20:35:00Z",
+  "notes": "Model Download GUI Progress Fix: throttled IPC event emission to 80ms to eliminate event queue congestion; added robust dual-casing payload parser for real-time percentage, speed (MB/s), and progress bar animations."
 }
+
 
 
 
