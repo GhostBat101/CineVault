@@ -30,6 +30,7 @@ pub async fn generate_ai_summary(request: InferenceRequest) -> Result<InferenceR
         generated_text: format!("AI Narrative Analysis for: {}", request.prompt),
         model_used: "Llama-3.2-1B-Instruct-Q4_K_M".to_string(),
         total_tokens: 142,
+        generation_time_ms: 120,
     })
 }
 

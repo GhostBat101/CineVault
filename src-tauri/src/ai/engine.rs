@@ -1,4 +1,4 @@
-use crate::ai::models::{ModelMetadata, get_default_model, SUPPORTED_MODELS};
+use crate::ai::models::{ModelMetadata, get_default_model, get_supported_models};
 use crate::ai::prompts::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -53,7 +53,7 @@ impl LocalAIEngine {
     }
 
     pub fn get_supported_models(&self) -> Vec<ModelMetadata> {
-        SUPPORTED_MODELS.to_vec()
+        get_supported_models()
     }
 
     pub async fn run_inference(&self, req: InferenceRequest) -> Result<InferenceResponse, String> {
@@ -61,7 +61,7 @@ impl LocalAIEngine {
         let active_model_id = self.active_model_id.lock().unwrap().clone();
 
         // Assemble structured prompt if media parameters are provided
-        let formatted_prompt = if let Some(title) = &req.title {
+        let _formatted_prompt = if let Some(title) = &req.title {
             PromptBuilder::build_narrative_summary_prompt(
                 title,
                 req.genres.as_deref().unwrap_or(&[]),
