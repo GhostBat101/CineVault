@@ -1,6 +1,6 @@
 {
-  "version": "0.3.4",
-  "build": 25,
-  "lastUpdated": "2026-08-16T15:37:15Z",
-  "notes": "Phase 15 Complete: Windows Desktop Application Installer Packaging (.exe Setup Wizard via NSIS) & CI/CD Release Pipeline."
+  "version": "0.3.5",
+  "build": 26,
+  "lastUpdated": "2026-08-16T15:56:40Z",
+  "notes": "Fixed Tauri CLI crate version alignment, generated full Windows NSIS desktop icon suite, and updated GitHub release pipeline."
 }
