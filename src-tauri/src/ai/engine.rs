@@ -1,7 +1,31 @@
+//! ai/engine.rs
+//! ─────────────────────────────────────────────────────────────
+//! WHAT: The LocalAIEngine facade. Owns Model Vault state (directory, active
+//!       model id, installed flags) and dispatches generation:
+//!
+//!       1. REAL PATH (`--features real-inference`): when the active model's
+//!          GGUF file exists in the vault, generation runs through
+//!          llama_engine::generate_with_model - genuine token streaming.
+//!       2. TEMPLATE FALLBACK: without the feature (or when the model file is
+//!          absent) a deterministic narrative-analysis template is produced.
+//!          The fallback is logged loudly and streamed through the SAME token
+//!          sink so the UI behaves identically either way.
+//!
+//! PROMPT FORMATS: chat templates are built per the active model catalog entry
+//!       (`llama3` or `chatml`) with a fixed cinematic-analyst system role.
+//!
+//! USES:    ai/models (catalog), ai/llama_engine (feature-gated), logger.
+//! USED BY: commands/mod.rs (generate_ai_summary + vault commands).
+
 use crate::ai::models::{ModelMetadata, get_default_model, get_supported_models};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+/// Caller-provided sink receiving every generated text piece (streaming).
+/// The template fallback emits its full text once through this same sink so
+/// frontend streaming behavior is uniform across engines.
+pub type TokenSink = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,8 +36,25 @@ pub struct InferenceRequest {
     pub synopsis: Option<String>,
     pub user_notes: Option<String>,
     pub custom_focus: Option<String>,
+    /// Media type hint ('movie' | 'series' | ... ) - shapes the analysis ask.
+    pub media_type: Option<String>,
+    /// Sampling temperature; None = engine default (0.7).
     pub temperature: Option<f32>,
+    /// Hard cap on generated tokens; None = engine default (512).
     pub max_tokens: Option<usize>,
+    /// GPU layer offload policy: 0 = CPU only, negative = offload all layers
+    /// (safe for the <=1.1GB catalog models under the hard 2048MB ceiling),
+    /// positive = exact layer count. Ignored by the template engine.
+    #[serde(default)]
+    pub gpu_layers: Option<i64>,
+    /**
+     * Caller-generated correlation id echoed on every `ai:token` event so
+     * MULTIPLE concurrent useAISummary instances can each stream only THEIR
+     * generation (the event bus is global - untagged broadcasts leak tokens
+     * into every mounted listener).
+     */
+    #[serde(default)]
+    pub client_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,16 +106,16 @@ impl LocalAIEngine {
     }
 
     pub fn set_vault_dir<P: AsRef<Path>>(&self, path: P) {
-        let mut dir = self.vault_dir.lock().unwrap();
+        let mut dir = self.vault_dir.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         *dir = path.as_ref().to_path_buf();
     }
 
     pub fn get_vault_dir(&self) -> PathBuf {
-        self.vault_dir.lock().unwrap().clone()
+        self.vault_dir.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
     }
 
     pub fn set_active_model(&self, model_id: &str) {
-        let mut active = self.active_model_id.lock().unwrap();
+        let mut active = self.active_model_id.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         *active = model_id.to_string();
     }
 
@@ -84,7 +125,7 @@ impl LocalAIEngine {
 
     pub fn get_vault_status(&self) -> ModelVaultStatus {
         let vault_dir = self.get_vault_dir();
-        let active_id = self.active_model_id.lock().unwrap().clone();
+        let active_id = self.active_model_id.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
         let supported = self.get_supported_models();
 
         let mut items = Vec::new();
@@ -122,15 +163,68 @@ impl LocalAIEngine {
         }
     }
 
-    pub async fn run_inference(&self, req: InferenceRequest) -> Result<InferenceResponse, String> {
+    /**
+     * Run one inference request through the REAL engine (when compiled with
+     * `real-inference` AND the active model file exists) or the template
+     * fallback. Generated pieces stream through `on_token` in both modes.
+     */
+    pub async fn run_inference(
+        &self,
+        req: InferenceRequest,
+        on_token: Option<TokenSink>,
+    ) -> Result<InferenceResponse, String> {
         let start_time = std::time::Instant::now();
-        let active_model_id = self.active_model_id.lock().unwrap().clone();
+        let active_model_id = self.active_model_id.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+
+        // Catalog metadata for the ACTIVE model drives prompt format/context size.
+        let meta = get_supported_models()
+            .into_iter()
+            .find(|m| m.id == active_model_id);
+
+        // ── 1. REAL PATH (feature-gated at compile time) ────────────────────
+        #[cfg(feature = "real-inference")]
+        if let Some(meta) = &meta {
+            let model_path = self.get_vault_dir().join(&meta.filename);
+            if model_path.exists() {
+                let prompt = build_chat_prompt(&req, &meta.prompt_format);
+                crate::logger::Logger::info(&format!(
+                    "REAL inference via {} ({}, temp={:?}, max={:?}, gpu={:?})",
+                    meta.id, meta.prompt_format, req.temperature, req.max_tokens, req.gpu_layers
+                ));
+                // Blocking native compute - keep it off the async reactor by
+                // delegating to the blocking pool.
+                let sink = on_token;
+                return tokio::task::spawn_blocking(move || {
+                    crate::ai::llama_engine::generate_with_model(
+                        &model_path,
+                        &prompt,
+                        meta.context_length as u32,
+                        req.gpu_layers.unwrap_or(-1),
+                        req.temperature.unwrap_or(0.7),
+                        req.max_tokens.unwrap_or(512).min(2048),
+                        sink.as_ref(),
+                    )
+                })
+                .await
+                .map_err(|e| format!("Inference worker panicked: {}", e))?;
+            }
+            crate::logger::Logger::warn(&format!(
+                "Active model '{}' has no GGUF file in the vault - using template fallback.",
+                meta.id
+            ));
+        }
+
+        // ── 2. TEMPLATE FALLBACK ─────────────────────────────────────────────
+        crate::logger::Logger::info(&format!(
+            "TEMPLATE analysis (compile with --features real-inference for genuine GGUF generation). model={}",
+            active_model_id
+        ));
 
         let title = req.title.as_deref().unwrap_or("the work");
         let genres_str = req.genres.as_ref()
             .map(|g| g.join(" / "))
             .unwrap_or_else(|| "Drama / Cinematic Feature".to_string());
-        
+
         let synopsis_clean = req.synopsis.as_deref().unwrap_or("").trim();
         let synopsis_excerpt = if !synopsis_clean.is_empty() {
             synopsis_clean
@@ -150,20 +244,65 @@ impl LocalAIEngine {
             ### Director's Mise-en-Scène & Cinematographic Cues\n\n\
             - **Visual Palette & Contrast**: High-contrast framing that transitions from clinical, sterile claustrophobia to saturated, frenzied compositions.\n\
             - **Pacing & Soundscape**: Sudden tonal shifts punctuated by discordant sound design and deliberate silence to heighten dread and immersion.\n\n\
-            *Analysis synthesized locally via {} under safe 2.0 GB VRAM envelope.*",
+            *Template analysis synthesized locally via {} under safe 2.0 GB VRAM envelope.*",
             title,
             genres_str,
             synopsis_excerpt,
             active_model_id
         );
 
-        let elapsed = start_time.elapsed().as_millis() as u64;
+        // Stream once so the UI treats both engines identically.
+        if let Some(sink) = &on_token {
+            sink(&generated_text);
+        }
 
         Ok(InferenceResponse {
             generated_text,
             model_used: active_model_id,
             total_tokens: 260,
-            generation_time_ms: elapsed,
+            generation_time_ms: start_time.elapsed().as_millis() as u64,
         })
+    }
+}
+
+/**
+ * Build a chat-formatted prompt for the target model family.
+ *
+ * System role fixes CineVault's persona: an offline cinematic analyst whose
+ * output is markdown-structured and spoiler-aware of only supplied context.
+ */
+fn build_chat_prompt(req: &InferenceRequest, format: &str) -> String {
+    let title = req.title.as_deref().unwrap_or("an untitled work");
+    let genres = req.genres.as_ref().map(|g| g.join(", ")).unwrap_or_default();
+    let synopsis = req.synopsis.as_deref().unwrap_or("No synopsis provided.");
+    let media_type = req.media_type.as_deref().unwrap_or("movie");
+
+    let user_content = format!(
+        "Title: {}\nType: {}\nGenres: {}\nSynopsis: {}\n\nTask: {}",
+        title, media_type, genres, synopsis, req.prompt
+    );
+
+    match format {
+        "llama3" => format!(
+            // NO literal <|begin_of_text|> here: llama_engine tokenizes with
+            // AddBos::Always, which injects exactly one BOS. Embedding another
+            // one produced a double-BOS sequence that degraded generation.
+            "<|start_header_id|>system<|end_header_id|>\n\n\
+             You are CineVault's local cinematic analyst. Produce concise, \
+             well-structured markdown analysis grounded ONLY in the provided material.<|eot_id|>\
+             <|start_header_id|>user<|end_header_id|>\n\n{user}<|eot_id|>\
+             <|start_header_id|>assistant<|end_header_id|>\n\n",
+            user = user_content
+        ),
+        "chatml" => format!(
+            "<|im_start|>system\n\
+             You are CineVault's local cinematic analyst. Produce concise, \
+             well-structured markdown analysis grounded ONLY in the provided material.<|im_end|>\n\
+             <|im_start|>user\n{user}<|im_end|>\n\
+             <|im_start|>assistant\n",
+            user = user_content
+        ),
+        // Unknown formats fall back to plain text - every GGUF still completes.
+        _ => user_content,
     }
 }

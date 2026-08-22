@@ -1,4 +1,31 @@
-// Core Data Types for CineVault
+/**
+ * types/index.ts
+ * ─────────────────────────────────────────────────────────────
+ * WHAT: Single source of truth for every shared TypeScript type in the
+ *       CineVault frontend. Mirrors the serde structs in src-tauri
+ *       (all Tauri payloads are camelCase on the wire via
+ *       `#[serde(rename_all = "camelCase")]`).
+ *
+ * USES:    Nothing (leaf module).
+ * USED BY: services/api.ts, hooks/*.ts, components/** (imported everywhere).
+ *
+ * KEY EXPORTS:
+ *   MediaType / WatchStatus / RoleType / ArcType / ImpactLevel /
+ *     ThemeName / BeatSheetFramework - string unions constraining entity fields.
+ *   Media          - core tracked-title entity (round-trips SQLite `media` table).
+ *   Character      - Director's Suite cast member.
+ *   StoryArc       - hierarchical narrative arc.
+ *   Beat           - one Save-the-Cat! beat (id/name/act/percentage/content).
+ *   BeatItem / BeatSheet - richer persisted sheet model (beats stored as JSON).
+ *   RelationshipLink - directed tension edge between two characters (1-10 score).
+ *   LoreNote       - world-building note with markdown content + tags.
+ *   HardwareTelemetry - live CPU/RAM/VRAM snapshot from Rust telemetry module.
+ *   ModelStatusItem / ModelVaultStatus - GGUF catalog entries + vault state.
+ *   AppSettings    - persisted user settings schema (SQLite app_settings).
+ *   AppUpdateAsset / AppUpdateInfo - GitHub release metadata for updater UI.
+ *   ScrapedCastMember / ScrapedMedia - IMDb scraper output (camelCase, matches
+ *     src-tauri/src/scraper/imdb.rs serde structs exactly).
+ */
 
 export type MediaType = 'movie' | 'series' | 'anime' | 'book' | 'screenplay';
 export type WatchStatus = 'plan_to_watch' | 'watching' | 'completed' | 'dropped';
@@ -26,7 +53,14 @@ export interface Media {
   aiSummary?: string;
   aiModelUsed?: string;
   userStatus: WatchStatus;
+  /** Personal score 1-10 (user's own verdict - distinct from imdbRating). */
   userRating?: number;
+  /** Free-form personal review / notes. */
+  reviewNotes?: string;
+  /** Favorite flag shown as a heart across the UI. */
+  isFavorite?: boolean;
+  /** ISO date the item was marked completed. */
+  watchedDate?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -211,6 +245,40 @@ export interface AppUpdateInfo {
   publishedAt: string;
   releaseUrl: string;
   assets: AppUpdateAsset[];
+}
+
+/**
+ * One cast member extracted from IMDb.
+ * Field names MUST stay identical to src-tauri/src/scraper/imdb.rs
+ * `ScrapedCastMember` (serde rename_all = "camelCase").
+ */
+export interface ScrapedCastMember {
+  name: string;
+  characterName: string | null;
+  avatarUrl: string | null;
+}
+
+/**
+ * Metadata returned by the `extract_imdb` Tauri command.
+ * Field names MUST stay identical to src-tauri/src/scraper/imdb.rs
+ * `ScrapedMedia` (serde rename_all = "camelCase"). Optional fields are
+ * genuinely optional - the UI must render "unknown" instead of inventing values.
+ */
+export interface ScrapedMedia {
+  imdbId: string;
+  title: string;
+  originalTitle: string | null;
+  year: number | null;
+  mediaType: string;
+  runtimeMinutes: number | null;
+  imdbRating: number | null;
+  posterUrl: string | null;
+  /** Backend-cached local copy of the poster (asset-protocol path), when download succeeded. */
+  posterLocalPath: string | null;
+  synopsis: string | null;
+  genres: string[];
+  directors: string[];
+  castMembers: ScrapedCastMember[];
 }
 
 

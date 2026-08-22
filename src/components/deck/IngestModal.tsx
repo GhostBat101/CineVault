@@ -1,14 +1,47 @@
+﻿/**
+ * deck/IngestModal.tsx
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * WHAT: "Ingest Media" modal with two tabs: (1) IMDb scraper - paste a URL/ID,
+ *       extract metadata, preview, save; (2) Original screenplay - create a
+ *       blank narrative canvas. Persists EXACTLY ONCE per entry and reports
+ *       the saved entity upward via onMediaSaved (App only mirrors state).
+ *
+ * DATA HONESTY RULE: missing scrape fields stay missing. The UI renders
+ *       "unknown" placeholders instead of inventing years/ratings/runtime -
+ *       fabricated metadata used to be persisted as fact.
+ *
+ * USES:    services/api.ts (extractImdb), types/index.ts, common/{Modal,Button}.
+ * USED BY: App.tsx.
+ *
+ * PROPS:
+ *   isOpen       - modal visibility.
+ *   onClose      - request close (also resets all form state).
+ *   onMediaSaved - called with the persisted Media entity (state mirror ONLY).
+ */
 import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { api } from '../../services/api';
+import { getPosterSrc } from '../../utils/poster';
 import { Media, MediaType } from '../../types';
 import { Sparkles, Globe, PenTool, CheckCircle } from 'lucide-react';
 
 interface IngestModalProps {
+  /** Modal visibility flag. */
   isOpen: boolean;
+  /** Close request; also resets the form. */
   onClose: () => void;
+  /** Receives the already-persisted entity - local state mirroring ONLY. */
   onMediaSaved: (media: Media) => void;
+}
+
+/** Map the scraper's mediaType string onto the MediaType union. */
+function mapScrapedMediaType(raw: string | undefined): MediaType {
+  const value = (raw || '').toLowerCase();
+  if (value.includes('series') || value.includes('episode') || value.includes('tv')) {
+    return 'series';
+  }
+  return 'movie';
 }
 
 export const IngestModal: React.FC<IngestModalProps> = ({
@@ -16,9 +49,15 @@ export const IngestModal: React.FC<IngestModalProps> = ({
   onClose,
   onMediaSaved,
 }) => {
+  /** Which ingest tab is active. */
   const [tab, setTab] = useState<'imdb' | 'original'>('imdb');
+  /** Raw IMDb URL/ID input text. */
   const [imdbUrl, setImdbUrl] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  /** True while the IMDb extraction IPC is in flight (Extract button). */
+  const [isExtracting, setIsExtracting] = useState(false);
+  /** True while the vault-save IPC is in flight (Save buttons). */
+  const [isSaving, setIsSaving] = useState(false);
+  /** Latest error shown in the banner (extraction or save). */
   const [error, setError] = useState<string | null>(null);
 
   // Scraped preview state
@@ -30,25 +69,34 @@ export const IngestModal: React.FC<IngestModalProps> = ({
   const [originalSynopsis, setOriginalSynopsis] = useState('');
   const [originalGenres, setOriginalGenres] = useState('Drama, Thriller');
 
+  /**
+   * Extract metadata for the entered URL/ID. Builds a Media entity WITHOUT
+   * fabricating any values: absent fields remain undefined.
+   */
   const handleExtractImdb = async () => {
     if (!imdbUrl.trim()) return;
-    setIsLoading(true);
+    setIsExtracting(true);
     setError(null);
     try {
+      // NOTE: backend serializes ScrapedMedia as camelCase (serde rename_all).
       const scraped = await api.extractImdb(imdbUrl);
       const mediaEntry: Media = {
-        id: `mv_${Date.now()}`,
-        imdbId: scraped.imdb_id,
+        id: `mv_${crypto.randomUUID()}`,
+        imdbId: scraped.imdbId,
         title: scraped.title,
-        originalTitle: scraped.original_title,
-        year: scraped.year || 2024,
-        mediaType: 'movie',
-        runtimeMinutes: scraped.runtime_minutes || 120,
-        imdbRating: scraped.imdb_rating || 8.0,
-        posterUrl: scraped.poster_url,
-        synopsis: scraped.synopsis || 'An exciting cinematic journey.',
-        genres: scraped.genres.length > 0 ? scraped.genres : ['Drama'],
-        directors: scraped.directors.length > 0 ? scraped.directors : ['Director'],
+        originalTitle: scraped.originalTitle ?? undefined,
+        year: scraped.year ?? undefined,
+        mediaType: mapScrapedMediaType(scraped.mediaType),
+        runtimeMinutes: scraped.runtimeMinutes ?? undefined,
+        imdbRating: scraped.imdbRating ?? undefined,
+        posterUrl: scraped.posterUrl ?? undefined,
+        // Locally cached poster (backend downloads at extract time) - keeps
+        // the vault's artwork available fully offline.
+        posterLocalPath: scraped.posterLocalPath ?? undefined,
+        synopsis: scraped.synopsis ?? undefined,
+        // Dedupe + trim genres/directors instead of inventing defaults.
+        genres: [...new Set(scraped.genres.map((g) => g.trim()).filter(Boolean))],
+        directors: [...new Set(scraped.directors.map((d) => d.trim()).filter(Boolean))],
         userStatus: 'plan_to_watch',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -56,15 +104,20 @@ export const IngestModal: React.FC<IngestModalProps> = ({
       setScrapedData(mediaEntry);
     } catch (err) {
       console.error('[IMDb Extract Error]', err);
-      setError(err instanceof Error ? err.message : String(err) || 'Failed to extract IMDb metadata. Check URL.');
+      setError(
+        err instanceof Error
+          ? err.message
+          : String(err) || 'Failed to extract IMDb metadata. Check URL.'
+      );
     } finally {
-      setIsLoading(false);
+      setIsExtracting(false);
     }
   };
 
+  /** Persist the scraped preview ONCE, then hand it to App for state mirroring. */
   const handleSaveToVault = async () => {
     if (!scrapedData) return;
-    setIsLoading(true);
+    setIsSaving(true);
     try {
       await api.saveMedia(scrapedData);
       onMediaSaved(scrapedData);
@@ -72,25 +125,27 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err) || 'Failed to save media entry.');
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
+  /** Create + persist an original canvas entry (single save). */
   const handleSaveOriginal = async () => {
     if (!originalTitle.trim()) return;
-    setIsLoading(true);
+    setIsSaving(true);
     try {
+      const now = new Date();
       const originalEntry: Media = {
-        id: `orig_${Date.now()}`,
-        title: originalTitle,
+        id: `orig_${crypto.randomUUID()}`,
+        title: originalTitle.trim(),
         mediaType: originalType,
-        year: new Date().getFullYear(),
-        synopsis: originalSynopsis || 'Original Screenplay Canvas',
-        genres: originalGenres.split(',').map((g) => g.trim()).filter(Boolean),
+        year: now.getFullYear(),
+        synopsis: originalSynopsis.trim() || undefined,
+        genres: [...new Set(originalGenres.split(',').map((g) => g.trim()).filter(Boolean))],
         directors: ['Original Creator'],
         userStatus: 'plan_to_watch',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
       };
       await api.saveMedia(originalEntry);
       onMediaSaved(originalEntry);
@@ -98,18 +153,24 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err) || 'Failed to save original canvas.');
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
+  /** Reset every field (including tab) so reopening always starts clean. */
   const handleClose = () => {
     setScrapedData(null);
     setImdbUrl('');
     setError(null);
+    setTab('imdb');
     setOriginalTitle('');
     setOriginalSynopsis('');
+    setOriginalGenres('Drama, Thriller');
     onClose();
   };
+
+  /** Render an "unknown" chip when a scrape value is absent. */
+  const renderUnknown = () => <span style={{ opacity: 0.5 }}>unknown</span>;
 
   return (
     <Modal
@@ -170,8 +231,10 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         </button>
       </div>
 
+      {/* Error Banner */}
       {error && (
         <div
+          role="alert"
           style={{
             padding: '10px 14px',
             backgroundColor: 'rgba(239, 68, 68, 0.15)',
@@ -182,7 +245,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
             marginBottom: '16px',
           }}
         >
-          ⚠️ {error}
+          âš ï¸ {error}
         </div>
       )}
 
@@ -193,27 +256,32 @@ export const IngestModal: React.FC<IngestModalProps> = ({
             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
               IMDb Title URL or ID
             </label>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <input
                 type="text"
                 value={imdbUrl}
                 onChange={(e) => setImdbUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  // Guard against concurrent extracts (Enter during flight).
+                  if (e.key === 'Enter' && imdbUrl.trim() && !isExtracting) handleExtractImdb();
+                }}
                 placeholder="https://www.imdb.com/title/tt1375666/ or tt1375666"
                 style={{
                   flex: 1,
+                  minWidth: '180px',
                   padding: '8px 12px',
                   borderRadius: 'var(--radius-sm)',
                   border: '1px solid var(--border-medium)',
                   background: 'var(--bg-tertiary)',
                   color: 'var(--text-primary)',
                   fontSize: '13px',
-                  outline: 'none',
                 }}
               />
               <Button
                 variant="primary"
                 onClick={handleExtractImdb}
-                isLoading={isLoading}
+                isLoading={isExtracting}
+                disabled={!imdbUrl.trim()}
                 icon={<Sparkles size={14} />}
               >
                 Extract
@@ -221,7 +289,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
             </div>
           </div>
 
-          {/* Scraped Result Preview */}
+          {/* Scraped Result Preview - honest "unknown" chips for absent fields */}
           {scrapedData && (
             <div
               className="glass-panel"
@@ -232,36 +300,40 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                 borderRadius: 'var(--radius-md)',
                 backgroundColor: 'var(--bg-tertiary)',
                 border: '1px solid var(--border-medium)',
+                flexWrap: 'wrap',
               }}
             >
-              {scrapedData.posterUrl && (
+              {getPosterSrc(scrapedData) && (
                 <img
-                  src={scrapedData.posterUrl}
+                  src={getPosterSrc(scrapedData)}
                   alt={scrapedData.title}
-                  style={{ width: '80px', height: '120px', objectFit: 'cover', borderRadius: 'var(--radius-sm)' }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
+                  style={{ width: '80px', height: '120px', objectFit: 'cover', borderRadius: 'var(--radius-sm)', flexShrink: 0 }}
                 />
               )}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '8px' }}>
                 <div>
                   <h4 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {scrapedData.title} {scrapedData.year && `(${scrapedData.year})`}
+                    {scrapedData.title} {scrapedData.year ? `(${scrapedData.year})` : ''}
                   </h4>
-                  <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: 'var(--text-muted)', margin: '4px 0' }}>
-                    <span>★ {scrapedData.imdbRating}</span>
-                    <span>•</span>
-                    <span>{scrapedData.runtimeMinutes} min</span>
-                    <span>•</span>
-                    <span>{scrapedData.genres.join(', ')}</span>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '11px', color: 'var(--text-muted)', margin: '4px 0' }}>
+                    <span>â˜… {typeof scrapedData.imdbRating === 'number' ? scrapedData.imdbRating.toFixed(1) : renderUnknown()}</span>
+                    <span>â€¢</span>
+                    <span>{scrapedData.runtimeMinutes ? `${scrapedData.runtimeMinutes} min` : renderUnknown()}</span>
+                    <span>â€¢</span>
+                    <span>{scrapedData.genres.length > 0 ? scrapedData.genres.join(', ') : 'No genres listed'}</span>
                   </div>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                    {scrapedData.synopsis}
+                    {scrapedData.synopsis || 'No synopsis extracted.'}
                   </p>
                 </div>
                 <Button
                   variant="primary"
                   size="sm"
                   onClick={handleSaveToVault}
-                  isLoading={isLoading}
+                  isLoading={isSaving}
                   icon={<CheckCircle size={14} />}
                   style={{ alignSelf: 'flex-start', marginTop: '10px' }}
                 >
@@ -293,12 +365,11 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                 background: 'var(--bg-tertiary)',
                 color: 'var(--text-primary)',
                 fontSize: '13px',
-                outline: 'none',
               }}
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
             <div>
               <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
                 Format
@@ -314,12 +385,12 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                   background: 'var(--bg-tertiary)',
                   color: 'var(--text-primary)',
                   fontSize: '13px',
-                  outline: 'none',
                 }}
               >
                 <option value="movie">Feature Film</option>
-                <option value="tv">TV Pilot / Limited Series</option>
-                <option value="novel">Novel / Lore Document</option>
+                <option value="series">TV Pilot / Limited Series</option>
+                <option value="screenplay">Screenplay</option>
+                <option value="book">Novel / Lore Document</option>
               </select>
             </div>
 
@@ -339,7 +410,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                   background: 'var(--bg-tertiary)',
                   color: 'var(--text-primary)',
                   fontSize: '13px',
-                  outline: 'none',
                 }}
               />
             </div>
@@ -362,8 +432,8 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                 background: 'var(--bg-tertiary)',
                 color: 'var(--text-primary)',
                 fontSize: '13px',
-                outline: 'none',
                 fontFamily: 'var(--font-sans)',
+                resize: 'vertical',
               }}
             />
           </div>
@@ -371,7 +441,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
           <Button
             variant="primary"
             onClick={handleSaveOriginal}
-            isLoading={isLoading}
+            isLoading={isSaving}
             disabled={!originalTitle.trim()}
           >
             Create Narrative Canvas

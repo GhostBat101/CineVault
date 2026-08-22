@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 import { Cpu, Download, CheckCircle, FolderOpen, HardDrive, ShieldCheck, AlertCircle } from 'lucide-react';
 import { useTelemetry } from '../../hooks/useTelemetry';
 import { api, isTauri } from '../../services/api';
 import { ModelStatusItem } from '../../types';
+import { toast } from '../common/Toast';
 
 export const ModelVaultView: React.FC = () => {
   const telemetry = useTelemetry(1000);
@@ -29,10 +30,14 @@ export const ModelVaultView: React.FC = () => {
   useEffect(() => {
     fetchVaultStatus();
 
+    // Disposed-flag pattern: if the component unmounts before the async
+    // listen() resolves, the subscription is cancelled instead of leaking.
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     if (isTauri()) {
-      import('@tauri-apps/api/event').then(({ listen }) => {
+      import('@tauri-apps/api/event').then(({ listen }) =>
         listen<any>('model_download_progress', (event) => {
+          if (disposed) return;
           const payload = event.payload;
           if (payload) {
             const pct = Math.min(100, Math.max(0, Math.round(payload.percentage ?? payload.percent ?? 0)));
@@ -48,14 +53,19 @@ export const ModelVaultView: React.FC = () => {
             }
           }
         }).then((unsub) => {
+          if (disposed) {
+            unsub();
+            return;
+          }
           unlisten = unsub;
-        });
-      }).catch((e) => {
+        })
+      ).catch((e) => {
         console.warn('Could not bind download listener:', e);
       });
     }
 
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
     };
   }, []);
@@ -65,10 +75,9 @@ export const ModelVaultView: React.FC = () => {
   const [customPath, setCustomPath] = useState('');
   const [customName, setCustomName] = useState('');
 
-  const activeModel = models.find((m) => m.isActive) || models[0] || {
-    name: 'No Active Model',
-    vramEstimatedMb: 0,
-  };
+  // Active model for the hero card. Only an entry the BACKEND flags active
+  // qualifies - falling back to models[0] would mislabel an inactive model.
+  const activeModel = models.find((m) => m.isActive);
 
   const handleStartDownload = async (modelId: string) => {
     setDownloadingModelId(modelId);
@@ -80,23 +89,35 @@ export const ModelVaultView: React.FC = () => {
       await fetchVaultStatus();
     } catch (err: any) {
       console.error('[Model Download Error]', err);
-      alert(`Model download error: ${err?.message || err}`);
+      toast.error(`Model download error: ${err?.message || err}`, 'Download failed');
     } finally {
       setDownloadingModelId(null);
     }
   };
 
   const handleActivateModel = async (modelId: string) => {
+    // Pre-change snapshot: if the backend rejects activation we restore this
+    // exact array so the previously-active model keeps its ACTIVE badge.
+    const previousModels = models;
+    // Optimistically flip isActive so the UI feels instant while the IPC call
+    // is in flight.
+    const targetModel = previousModels.find((m) => m.id === modelId);
+    setModels((prev) =>
+      prev.map((m) => ({
+        ...m,
+        isActive: m.id === modelId,
+      }))
+    );
     try {
       await api.setActiveAiModel(modelId);
-      setModels((prev) =>
-        prev.map((m) => ({
-          ...m,
-          isActive: m.id === modelId,
-        }))
-      );
     } catch (err) {
       console.error('[Activate Model Error]', err);
+      // Roll back to the pre-change snapshot - undo the optimistic flip.
+      setModels(previousModels);
+      toast.error(
+        `Could not activate ${targetModel?.name ?? modelId}`,
+        'Activation failed'
+      );
     }
   };
 
@@ -185,7 +206,7 @@ export const ModelVaultView: React.FC = () => {
         <div>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Active Model</div>
           <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px' }}>
-            {activeModel.name}
+            {activeModel ? activeModel.name : 'No Active Model'}
           </div>
         </div>
 
@@ -226,33 +247,40 @@ export const ModelVaultView: React.FC = () => {
           gap: '12px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <FolderOpen size={18} color="var(--accent)" />
-          <div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Model Storage Location</div>
-            <div style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+          <FolderOpen size={18} color="var(--accent)" style={{ flexShrink: 0 }} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Model Storage Location (portable - beside the executable)</div>
+            <div
+              title={vaultPath}
+              style={{
+                fontSize: '13px',
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--text-primary)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
               {vaultPath}
             </div>
           </div>
         </div>
 
-        <button
-          onClick={() => {
-            const newPath = prompt('Enter new Model Vault directory path (e.g. ./models or D:\\AI_Models):', vaultPath);
-            if (newPath) setVaultPath(newPath);
-          }}
+        {/* Honest note: the vault directory is resolved by the native runtime at
+            boot (portable mode). Relocation is a future settings feature. */}
+        <span
+          className="cv-kicker"
           style={{
-            padding: '4px 10px',
-            borderRadius: 'var(--radius-sm)',
-            background: 'var(--bg-secondary)',
-            color: 'var(--text-secondary)',
-            border: '1px solid var(--border-medium)',
-            cursor: 'pointer',
-            fontSize: '12px',
+            fontSize: '10px',
+            color: 'var(--text-muted)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-full)',
+            padding: '3px 10px',
           }}
         >
-          Change Storage Path
-        </button>
+          Fixed by portable mode
+        </span>
       </div>
 
       {/* Models Grid */}
@@ -290,9 +318,9 @@ export const ModelVaultView: React.FC = () => {
                       </h4>
                       <div style={{ display: 'flex', gap: '6px', fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                         <span>{model.parameterSize}</span>
-                        <span>•</span>
+                        <span>â€¢</span>
                         <span>{model.quantization}</span>
-                        <span>•</span>
+                        <span>â€¢</span>
                         <span>{model.fileSizeMb} MB</span>
                       </div>
                     </div>
@@ -327,6 +355,24 @@ export const ModelVaultView: React.FC = () => {
                         INSTALLED
                       </span>
                     ) : null}
+
+                    {/* Session-only marker for locally mounted GGUFs that the
+                        backend catalog does not know about (cannot activate). */}
+                    {model.id.startsWith('custom_') && (
+                      <span
+                        title="Session-only import: persistent registration requires backend catalog support"
+                        style={{
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: 'var(--radius-full)',
+                          backgroundColor: 'var(--accent-subtle)',
+                          color: 'var(--text-muted)',
+                        }}
+                      >
+                        SESSION-ONLY
+                      </span>
+                    )}
                   </div>
 
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
@@ -423,7 +469,7 @@ export const ModelVaultView: React.FC = () => {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         title="Import Custom GGUF Model"
-        subtitle="Mount an existing local .gguf model file without redownloading"
+        subtitle="Registers a local .gguf for THIS SESSION only - persistent import arrives with backend catalog support"
         maxWidth="500px"
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -444,7 +490,6 @@ export const ModelVaultView: React.FC = () => {
                 borderRadius: 'var(--radius-sm)',
                 color: 'var(--text-primary)',
                 fontSize: '13px',
-                outline: 'none',
               }}
             />
           </div>
@@ -466,7 +511,6 @@ export const ModelVaultView: React.FC = () => {
                 borderRadius: 'var(--radius-sm)',
                 color: 'var(--text-primary)',
                 fontSize: '13px',
-                outline: 'none',
                 fontFamily: 'var(--font-mono)',
               }}
             />

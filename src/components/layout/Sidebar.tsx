@@ -1,11 +1,32 @@
+/**
+ * layout/Sidebar.tsx
+ * ─────────────────────────────────────────────────────────────
+ * WHAT: Collapsible left navigation rail (240px expanded <-> 68px icon rail):
+ *       quick-ingest CTA, four view links with shortcut hints, and the
+ *       collapse toggle. Also registers global keyboard shortcuts
+ *       (Ctrl+B collapse, Ctrl+1/2/3/, view switching).
+ *
+ * COLLAPSE OWNERSHIP: `isCollapsed` is owned by App.tsx, which force-collapses
+ *       the sidebar at narrow viewports (<640px). This component renders PURELY
+ *       from that prop - no CSS-side width overrides - so visual and logical
+ *       states can never desync.
+ *
+ * USES:    lucide-react icons.
+ * USED BY: App.tsx.
+ */
 import React, { useEffect } from 'react';
 import { Film, Compass, Cpu, Settings, ChevronLeft, ChevronRight, PlusCircle } from 'lucide-react';
 
 interface SidebarProps {
+  /** Currently active top-level view id. */
   activeTab: 'dashboard' | 'director' | 'model-vault' | 'settings';
+  /** Navigate to a top-level view. */
   onSelectTab: (tab: 'dashboard' | 'director' | 'model-vault' | 'settings') => void;
+  /** True renders the 68px icon rail; App may force this at narrow widths. */
   isCollapsed: boolean;
+  /** Toggle expand/collapse (Ctrl+B). */
   onToggleCollapse: () => void;
+  /** Open the ingest modal (New Entry CTA / Ctrl+N handled in App). */
   onOpenIngest: () => void;
 }
 
@@ -16,7 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   onOpenIngest,
 }) => {
-  // Global Keyboard Shortcuts (Ctrl+B, Ctrl+1, Ctrl+2, etc.)
+  // Global Keyboard Shortcuts (Ctrl+B, Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+,)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey) {
@@ -42,6 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onToggleCollapse, onSelectTab]);
 
+  /** Primary navigation definitions (icon + label + shortcut hint). */
   const navItems = [
     { id: 'dashboard', label: 'Media Library', icon: Film, shortcut: 'Ctrl+1' },
     { id: 'director', label: "Director's Suite", icon: Compass, shortcut: 'Ctrl+2' },
@@ -63,13 +85,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
         overflow: 'hidden',
         userSelect: 'none',
         zIndex: 40,
+        flexShrink: 0,
       }}
     >
       {/* Top Action & Navigation Links */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {/* Quick Ingest Button */}
         <button
+          type="button"
           onClick={onOpenIngest}
+          aria-label="New ingest entry"
           title={isCollapsed ? 'New Ingest Entry (Ctrl+N)' : undefined}
           style={{
             display: 'flex',
@@ -93,7 +118,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         {/* Nav Links */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <nav aria-label="Primary" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -101,8 +126,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             return (
               <button
                 key={item.id}
+                type="button"
                 onClick={() => onSelectTab(item.id)}
+                aria-current={isActive ? 'page' : undefined}
                 title={isCollapsed ? `${item.label} (${item.shortcut})` : undefined}
+                className={isActive ? 'nav-active-bar' : undefined}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -137,12 +165,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             );
           })}
-        </div>
+        </nav>
       </div>
 
       {/* Collapse Toggle Footer */}
       <button
+        type="button"
         onClick={onToggleCollapse}
+        aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         title={isCollapsed ? 'Expand Sidebar (Ctrl+B)' : 'Collapse Sidebar (Ctrl+B)'}
         style={{
           display: 'flex',

@@ -1,12 +1,42 @@
-import { useState, memo } from 'react';
+/**
+ * director/BeatCard.tsx
+ * ─────────────────────────────────────────────────────────────
+ * WHAT: One collapsible Save-the-Cat! beat row: numbered completion square,
+ *       act badge, name, timestamp estimate, and an expanded scene workspace
+ *       (textarea + per-beat "AI Beat Brainstorm" trigger).
+ *
+ * COMPLETION RULES:
+ *   - The numbered square is an explicit TOGGLE (manual control).
+ *   - Committing text also auto-completes a previously-empty beat once it has
+ *     meaningful content (>10 chars); emptying content clears completion.
+ *     Manual toggles otherwise win over the heuristic.
+ *
+ * RESYNC CONTRACT: local textarea state follows EXTERNAL content updates
+ *       (e.g. "Insert into beat" from the AI panel / persistence reload) but
+ *       never clobbers uncommitted local typing: external values are adopted
+ *       only while the local draft still equals the previous prop value.
+ *
+ * USES:    types/index.ts (Beat); design tokens --act-2, --shadow-1,
+ *          --status-success glow (Phase 3 uplift).
+ * USED BY: director/BeatSheetView.tsx (memoized; callbacks arrive stable).
+ * NOTE:    Hover feedback for the header row lives in index.css
+ *          (.beat-header:hover) - no JS hover handlers here by policy.
+ */
+import { useState, useRef, useEffect, memo } from 'react';
 import { Beat } from '../../types';
 import { Sparkles, ChevronDown, ChevronUp, CheckCircle, Clock } from 'lucide-react';
 
 interface BeatCardProps {
+  /** Beat entity rendered by this card. */
   beat: Beat;
+  /** Commit any change to this beat upward. */
   onUpdateBeat: (updatedBeat: Beat) => void;
+  /** Runtime used to translate beat percentages into minute estimates. */
   totalRuntimeMinutes?: number;
+  /** Fire the per-beat AI brainstorm (handled by the sheet view). */
   onGenerateAISuggestion?: (beat: Beat) => void;
+  /** Toggle manual completion (explicit user control). */
+  onToggleCompleted?: (beat: Beat) => void;
 }
 
 export const BeatCard = memo<BeatCardProps>(({
@@ -14,29 +44,68 @@ export const BeatCard = memo<BeatCardProps>(({
   onUpdateBeat,
   totalRuntimeMinutes = 110,
   onGenerateAISuggestion,
+  onToggleCompleted,
 }) => {
+  /** Whether the scene workspace below the header is visible. */
   const [isExpanded, setIsExpanded] = useState(false);
+  /** Local textarea draft; committed to the parent on blur. */
   const [content, setContent] = useState(beat.content);
+  /** Last content value seen from props - baseline for external-resync detection. */
+  const prevPropContentRef = useRef(beat.content);
 
-  // Compute minute / page timestamp from standard percentage
+  // Adopt EXTERNAL content changes: cleanly when the user has no divergent
+  // draft; otherwise APPEND the external addition to the local draft so an
+  // "Insert into beat" landing mid-edit is never clobbered by the blur commit.
+  useEffect(() => {
+    const prevProp = prevPropContentRef.current;
+    if (beat.content !== prevProp) {
+      if (content === prevProp) {
+        // Clean adoption - no uncommitted typing to protect.
+        setContent(beat.content);
+      } else if (beat.content.startsWith(prevProp)) {
+        // External APPENDED text (the AI-insert pattern): graft the suffix
+        // onto the local draft instead of discarding either side.
+        const addition = beat.content.slice(prevProp.length);
+        setContent((local) => local + addition);
+      }
+      // Divergent rewrite while dirty: keep the local draft; blur commits it.
+    }
+    prevPropContentRef.current = beat.content;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beat.content]);
+
+  // Minute/page timestamp estimated from the canonical percentage.
   const calculatedMinute = Math.round((beat.percentage / 100) * totalRuntimeMinutes);
 
+  /**
+   * Commit the draft on blur. Auto-completion heuristic: empty -> incomplete;
+   * first meaningful entry (>10 chars) into a previously-empty beat ->
+   * complete; otherwise preserve the manually-toggled value.
+   */
   const handleBlur = () => {
-    if (content !== beat.content) {
-      onUpdateBeat({
-        ...beat,
-        content,
-        isCompleted: content.trim().length > 10,
-      });
+    if (content === beat.content) return;
+    const hadContent = Boolean(beat.content.trim());
+    const hasContent = Boolean(content.trim());
+    let isCompleted = beat.isCompleted;
+    if (!hasContent) {
+      isCompleted = false;
+    } else if (!hadContent && content.trim().length > 10) {
+      isCompleted = true;
     }
+    onUpdateBeat({ ...beat, content, isCompleted });
   };
 
-  const getActBadgeColor = (act: string) => {
+  /** Act badge color token per act label. */
+  const getActBadgeColor = (act: string): string => {
     switch (act) {
-      case 'Act 1': return 'var(--accent)';
-      case 'Act 2': return '#38bdf8';
-      case 'Act 3': return 'var(--status-success)';
-      default: return 'var(--text-muted)';
+      case 'Act 1':
+        return 'var(--accent)';
+      case 'Act 2':
+        return 'var(--act-2)';
+      case 'Act 3':
+        return 'var(--status-success)';
+      default:
+        return 'var(--text-muted)';
     }
   };
 
@@ -51,8 +120,24 @@ export const BeatCard = memo<BeatCardProps>(({
         transition: 'all var(--transition-fast)',
       }}
     >
-      {/* Beat Header Bar */}
+      {/* Beat Header Bar - a div carrying button SEMANTICS (role/tabIndex/
+          keydown) so the completion toggle inside can remain a REAL button.
+          Nested <button> inside <button> is invalid HTML; this pattern keeps
+          both controls individually reachable in the accessibility tree. */}
       <div
+        role="button"
+        tabIndex={0}
+        className="beat-header"
+        onClick={() => setIsExpanded(!isExpanded)}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setIsExpanded(!isExpanded);
+          }
+        }}
+        aria-expanded={isExpanded}
+        aria-label={`${beat.name} (${beat.act}). ${isExpanded ? 'Collapse' : 'Expand'} scene editor.`}
         style={{
           padding: '12px 16px',
           display: 'flex',
@@ -60,30 +145,50 @@ export const BeatCard = memo<BeatCardProps>(({
           justifyContent: 'space-between',
           cursor: 'pointer',
           userSelect: 'none',
+          width: '100%',
+          background: 'transparent',
+          border: 'none',
+          textAlign: 'left',
+          color: 'inherit',
+          font: 'inherit',
         }}
-        onClick={() => setIsExpanded(!isExpanded)}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {/* Order & Checkbox */}
-          <div
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+          {/* Order / Completion Toggle - explicit manual control */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onToggleCompleted) onToggleCompleted(beat);
+            }}
+            aria-label={
+              beat.isCompleted
+                ? `Mark "${beat.name}" as incomplete`
+                : `Mark "${beat.name}" as complete`
+            }
+            title={beat.isCompleted ? 'Mark incomplete' : 'Mark complete'}
             style={{
               width: '24px',
               height: '24px',
               borderRadius: 'var(--radius-xs)',
-              backgroundColor: beat.isCompleted ? 'var(--status-success)' : 'var(--bg-tertiary)',
+              flexShrink: 0,
+              backgroundColor: beat.isCompleted ? 'var(--status-success)' : 'var(--bg-primary)',
               color: beat.isCompleted ? '#ffffff' : 'var(--text-muted)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: '11px',
               fontWeight: 700,
+              border: '1px solid var(--border-medium)',
+              boxShadow: beat.isCompleted ? '0 0 12px -2px var(--status-success)' : 'var(--shadow-1)',
+              cursor: 'pointer',
             }}
           >
             {beat.isCompleted ? <CheckCircle size={14} /> : beat.order}
-          </div>
+          </button>
 
           {/* Act Badge & Name */}
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span
                 style={{
@@ -107,8 +212,8 @@ export const BeatCard = memo<BeatCardProps>(({
           </div>
         </div>
 
-        {/* Timestamp & Expand Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* Timestamp & Chevron */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
           <div
             style={{
               display: 'flex',
@@ -126,12 +231,9 @@ export const BeatCard = memo<BeatCardProps>(({
             <span>~{calculatedMinute} min ({beat.percentage}%)</span>
           </div>
 
-          <button
-            aria-label={isExpanded ? 'Collapse scene editor' : 'Expand scene editor'}
-            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
-          >
+          <span style={{ color: 'var(--text-muted)', display: 'inline-flex' }}>
             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
+          </span>
         </div>
       </div>
 
@@ -150,10 +252,8 @@ export const BeatCard = memo<BeatCardProps>(({
             </span>
             {onGenerateAISuggestion && (
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onGenerateAISuggestion(beat);
-                }}
+                type="button"
+                onClick={() => onGenerateAISuggestion(beat)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -189,7 +289,6 @@ export const BeatCard = memo<BeatCardProps>(({
               color: 'var(--text-primary)',
               fontSize: '13px',
               fontFamily: 'var(--font-sans)',
-              outline: 'none',
               resize: 'vertical',
             }}
           />

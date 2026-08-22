@@ -1,5 +1,22 @@
+﻿/**
+ * settings/SettingsView.tsx
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * WHAT: Settings suite: theme picker, Local AI inference preferences
+ *       (temperature / GPU offload - persisted to SQLite), data export &
+ *       import, developer links, and the GitHub-release updater UI with live
+ *       install progress.
+ *
+ * PERSISTENCE: AI settings load once from `get_app_settings` and every change
+ *       is debounce-saved through `save_app_settings`. Tabs whose features are
+ *       not implemented yet say so honestly instead of claiming auto-save.
+ *
+ * USES:    services/api.ts (settings + updates), types/index.ts,
+ *          common/Button.tsx, common/Toast.tsx (toast singleton),
+ *          version.json.
+ * USED BY: App.tsx.
+ */
 import React, { useState } from 'react';
-import { ThemeName } from '../../types';
+import { ThemeName, AppSettings } from '../../types';
 import { Button } from '../common/Button';
 import { api } from '../../services/api';
 import {
@@ -19,55 +36,139 @@ import {
 import { AppUpdateInfo } from '../../types';
 import versionData from '../../../version.json';
 import { isTauri } from '../../services/api';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
+import { toast } from '../common/Toast';
 
 interface SettingsViewProps {
+  /** Currently active theme name. */
   currentTheme: ThemeName;
+  /** Switch the global theme (owned by App/useTheme). */
   onThemeChange: (theme: ThemeName) => void;
 }
+
+/** Debounce window (ms) for persisting slider-driven setting changes. */
+const SETTINGS_SAVE_DEBOUNCE_MS = 400;
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   currentTheme,
   onThemeChange,
 }) => {
+  /** Below this width the left nav collapses to a 56px icon rail. */
+  const isCompactNav = useMediaQuery('(max-width: 720px)');
   const [activeTab, setActiveTab] = useState<
     'general' | 'ai' | 'scraper' | 'director' | 'storage' | 'data' | 'developer' | 'updates'
   >('general');
 
-  // AI settings
+  // AI settings - hydrated from SQLite on mount, debounce-persisted on change
+  /** Generation temperature fed into every inference request. */
   const [temperature, setTemperature] = useState<number>(0.7);
+  /** GPU layer offload strategy ('gpu_auto' | 'cpu_only'). */
   const [offloadMode, setOffloadMode] = useState<string>('gpu_auto');
+  /** Pending save timer ref for debounced persistence. */
+  const saveTimerRef = React.useRef<number | null>(null);
+
+  // Hydrate persisted settings once on mount.
+  React.useEffect(() => {
+    let cancelled = false;
+    api
+      .getAppSettings()
+      .then((settings: AppSettings | null) => {
+        if (cancelled || !settings) return;
+        if (typeof settings.temperature === 'number') setTemperature(settings.temperature);
+        if (settings.inferenceMode) setOffloadMode(settings.inferenceMode);
+      })
+      .catch((err) => console.warn('[Settings Load]', err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Pending patch accumulated across rapid changes; flushed on debounce OR unmount. */
+  const pendingPatchRef = React.useRef<Partial<AppSettings>>({});
+
+  /**
+   * Debounce-persist a partial settings patch to SQLite. Sliders fire many
+   * change events; patches MERGE into the pending set and the last flush
+   * within the window hits the backend once (backend also merges server-side).
+   */
+  const persistAiSettings = (patch: Partial<AppSettings>) => {
+    pendingPatchRef.current = { ...pendingPatchRef.current, ...patch };
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+    }
+    const timer = window.setTimeout(() => {
+      const toSave = pendingPatchRef.current;
+      pendingPatchRef.current = {};
+      if (Object.keys(toSave).length === 0) return;
+      api.saveAppSettings(toSave).catch((err) => console.warn('[Settings Save]', err));
+    }, SETTINGS_SAVE_DEBOUNCE_MS);
+    saveTimerRef.current = timer;
+  };
+
+  /** Immediately send any patch still waiting on the debounce timer. */
+  const flushPendingSettings = () => {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const toSave = pendingPatchRef.current;
+    pendingPatchRef.current = {};
+    if (Object.keys(toSave).length === 0) return;
+    api.saveAppSettings(toSave).catch((err) => console.warn('[Settings Flush]', err));
+  };
 
   // App Update Checker State
+  /** Latest GitHub release info (null until first check). */
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  /** True while the release check request is in flight. */
   const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+  /** Last update-check/install error message. */
   const [updateError, setUpdateError] = useState<string | null>(null);
 
   // App Installer Live Streaming State
+  /** True while the installer downloads (button spinner). */
   const [isInstallingUpdate, setIsInstallingUpdate] = useState<boolean>(false);
+  /** Installer download percentage 0-100. */
   const [installProgress, setInstallProgress] = useState<number>(0);
+  /** Installer download speed string (MB/s). */
   const [installSpeed, setInstallSpeed] = useState<string>('0.0');
+  /** Human status line under the install progress bar. */
   const [installStatusText, setInstallStatusText] = useState<string>('Downloading installer...');
 
+  // Installer download progress events (disposed-flag guards the listen race)
   React.useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     if (isTauri()) {
-      import('@tauri-apps/api/event').then(({ listen }) => {
-        listen<any>('app_update_progress', (event) => {
-          const p = event.payload;
-          if (p) {
-            setInstallProgress(Math.round(p.percentage || 0));
-            setInstallSpeed((p.speedMbps || 0).toFixed(1));
-            if (p.isCompleted) {
-              setInstallStatusText('Launching installer & updating CineVault...');
+      import('@tauri-apps/api/event')
+        .then(({ listen }) =>
+          listen<any>('app_update_progress', (event) => {
+            if (disposed) return;
+            const p = event.payload;
+            if (p) {
+              setInstallProgress(Math.round(p.percentage || 0));
+              setInstallSpeed((p.speedMbps || 0).toFixed(1));
+              if (p.isCompleted) {
+                setInstallStatusText('Launching installer & updating CineVault...');
+              }
             }
+          })
+        )
+        .then((unsub) => {
+          if (disposed) {
+            unsub();
+            return;
           }
-        }).then((unsub) => {
           unlisten = unsub;
-        });
-      }).catch((err) => console.warn('Could not bind update listener:', err));
+        })
+        .catch((err) => console.warn('Could not bind update listener:', err));
     }
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
+      // FLUSH (not discard) any debounced patch so a slider nudge followed
+      // immediately by tab-switch is never lost.
+      flushPendingSettings();
     };
   }, []);
 
@@ -105,9 +206,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     try {
       await api.downloadAndInstallUpdate(downloadUrl, filename);
+      // Success normally ends with the backend exiting the process to hand
+      // over to the installer; reaching here means it returned without exit.
+      setInstallStatusText('Installer launched - CineVault will close to complete setup.');
     } catch (err: any) {
       console.error('[Install Update Error]', err);
       setUpdateError(err?.message || 'Failed to download or launch update installer.');
+    } finally {
+      // Never leave the button spinning if the backend returns without exit.
       setIsInstallingUpdate(false);
     }
   };
@@ -129,9 +235,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       a.href = url;
       a.download = `cinevault_backup_${Date.now()}.json`;
       a.click();
-      showStatus('Full relational database exported with SHA-256 checksum!');
+      URL.revokeObjectURL(url);
+      showStatus('Database exported to JSON with integrity checksum.');
     } catch (err) {
-      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+      // Non-blocking toast instead of alert(): export failures surface
+      // without freezing the UI thread.
+      const errMessage = err instanceof Error ? err.message : String(err);
+      toast.error(errMessage, 'Export failed');
     }
   };
 
@@ -143,16 +253,57 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const target = e.target as HTMLInputElement;
       const file = target.files?.[0];
       if (!file) return;
-      const text = await file.text();
       try {
+        // File read INSIDE the guard - permission/IO failures must surface
+        // as a toast, not an unhandled rejection.
+        const text = await file.text();
         await api.importDatabaseJson(text);
         showStatus('Database restored successfully! Reloading...');
         setTimeout(() => window.location.reload(), 1000);
       } catch (err) {
-        alert(`Import error: ${err instanceof Error ? err.message : String(err)}`);
+        toast.error(err instanceof Error ? err.message : String(err), 'Import failed');
       }
     };
     input.click();
+  };
+
+  /** Escape one RFC-4180 CSV cell: quote-wrapped, doubled inner quotes. */
+  const csvCell = (value: string | number | undefined): string => {
+    const raw = value === undefined || value === null ? '' : String(value);
+    return `"${raw.replace(/"/g, '""')}"`;
+  };
+
+  /**
+   * Export the vault as CSV (spreadsheet / Letterboxd-import friendly):
+   * Title, Year, Directors, your Rating, Watched date, Review notes.
+   */
+  const handleExportCsv = async () => {
+    try {
+      const media = await api.getAllMedia();
+      const header = 'Title,Year,Directors,YourRating,WatchedDate,Review';
+      const lines = media.map((m) =>
+        [
+          csvCell(m.title),
+          csvCell(m.year ?? ''),
+          csvCell(m.directors.join('; ')),
+          csvCell(m.userRating ?? ''),
+          csvCell(m.watchedDate ? m.watchedDate.slice(0, 10) : ''),
+          csvCell((m.reviewNotes ?? '').replace(/\r?\n/g, ' ')),
+        ].join(',')
+      );
+      // UTF-8 BOM: without it Excel on Windows mangles non-ASCII titles.
+      const csv = `\uFEFF${header}\n${lines.join('\n')}\n`;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cinevault_export_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showStatus(`Exported ${media.length} titles to CSV.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err), 'CSV export failed');
+    }
   };
 
   const tabs = [
@@ -167,22 +318,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   ] as const;
 
   return (
-    <div style={{ display: 'flex', gap: '24px', minHeight: '520px' }}>
-      {/* Left Vertical Sub-Nav (Linear Style) */}
+    <div style={{ display: 'flex', gap: isCompactNav ? '16px' : '24px', minHeight: '520px', minWidth: 0 }}>
+      {/* Left Vertical Sub-Nav (Linear Style) - icon rail when narrow */}
       <div
         style={{
-          width: '210px',
+          width: isCompactNav ? '56px' : '210px',
           display: 'flex',
           flexDirection: 'column',
           gap: '4px',
           borderRight: '1px solid var(--border-subtle)',
-          paddingRight: '16px',
+          paddingRight: isCompactNav ? '8px' : '16px',
           flexShrink: 0,
+          alignItems: isCompactNav ? 'center' : 'stretch',
         }}
       >
-        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, padding: '0 8px 8px 8px', textTransform: 'uppercase' }}>
-          Settings Categories
-        </div>
+        {!isCompactNav && (
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, padding: '0 8px 8px 8px', textTransform: 'uppercase' }}>
+            Settings Categories
+          </div>
+        )}
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -190,11 +344,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
+              title={tab.label}
+              aria-current={isActive ? 'true' : undefined}
               style={{
                 display: 'flex',
                 alignItems: 'center',
+                justifyContent: isCompactNav ? 'center' : 'flex-start',
+                width: isCompactNav ? '40px' : undefined,
                 gap: '10px',
-                padding: '8px 12px',
+                padding: isCompactNav ? '9px 0' : '8px 12px',
                 borderRadius: 'var(--radius-sm)',
                 border: 'none',
                 background: isActive ? 'var(--accent-subtle)' : 'transparent',
@@ -207,7 +365,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               }}
             >
               <Icon size={16} />
-              <span>{tab.label}</span>
+              {!isCompactNav && <span>{tab.label}</span>}
             </button>
           );
         })}
@@ -271,7 +429,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: th.accent }} />
                   </div>
                   <div style={{ fontSize: '11px', color: '#9ca3af' }}>
-                    {currentTheme === th.id ? '✓ Currently Active' : 'Click to activate'}
+                    {currentTheme === th.id ? 'âœ“ Currently Active' : 'Click to activate'}
                   </div>
                 </div>
               ))}
@@ -301,7 +459,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   max="1.0"
                   step="0.05"
                   value={temperature}
-                  onChange={(e) => setTemperature(Number(e.target.value))}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    setTemperature(value);
+                    persistAiSettings({ temperature: value });
+                  }}
+                  aria-label="Generation temperature"
                   style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'pointer' }}
                 />
               </div>
@@ -312,7 +475,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </label>
                 <select
                   value={offloadMode}
-                  onChange={(e) => setOffloadMode(e.target.value)}
+                  onChange={(e) => {
+                    const mode = e.target.value;
+                    setOffloadMode(mode);
+                    // inferenceMode is the persisted field name for this control
+                    persistAiSettings({ inferenceMode: mode === 'cpu_only' ? 'cpu_only' : 'gpu_auto' });
+                  }}
+                  aria-label="GPU layer offload strategy"
                   style={{
                     padding: '8px 12px',
                     backgroundColor: 'var(--bg-tertiary)',
@@ -320,7 +489,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     borderRadius: 'var(--radius-sm)',
                     color: 'var(--text-primary)',
                     fontSize: '13px',
-                    outline: 'none',
                     width: '100%',
                   }}
                 >
@@ -342,7 +510,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </p>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
               <div className="glass-panel" style={{ padding: '20px', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '12px' }}>
                 <div>
                   <h4 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Export Relational Vault</h4>
@@ -352,6 +520,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <Button variant="primary" size="sm" icon={<Download size={14} />} onClick={handleExportDatabase}>
                   Export Backup (JSON)
+                </Button>
+              </div>
+
+              <div className="glass-panel" style={{ padding: '20px', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '12px' }}>
+                <div>
+                  <h4 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Export Spreadsheet (CSV)</h4>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Flat catalog export with your ratings, watched dates, and reviews - opens in Excel or imports into Letterboxd-style trackers.
+                  </p>
+                </div>
+                <Button variant="secondary" size="sm" icon={<Download size={14} />} onClick={handleExportCsv}>
+                  Export Catalog (CSV)
                 </Button>
               </div>
 
@@ -550,7 +730,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
 
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    Published: {new Date(updateInfo.publishedAt).toLocaleDateString()}
+                    Published: {updateInfo.publishedAt ? new Date(updateInfo.publishedAt).toLocaleDateString() : '—'}
                   </span>
                 </div>
 
@@ -654,12 +834,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* Other Tabs Placeholder Renderers */}
+        {/* Tabs whose backing features are not implemented yet - honest copy */}
         {(activeTab === 'scraper' || activeTab === 'director' || activeTab === 'storage') && (
           <div className="glass-panel" style={{ padding: '24px', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
             <h4 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px' }}>{tabs.find((t) => t.id === activeTab)?.label}</h4>
             <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-              Settings are saved automatically to your local SQLite configuration store.
+              This settings section is planned for an upcoming release and has no configurable options yet.
             </p>
           </div>
         )}

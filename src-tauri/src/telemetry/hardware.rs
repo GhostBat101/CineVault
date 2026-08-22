@@ -31,7 +31,9 @@ impl HardwareMonitor {
     }
 
     pub fn sample_telemetry(&self, forced_cpu_mode: bool, model_size_mb: u64) -> TelemetryData {
-        let mut sys = self.sys.lock().unwrap();
+        // Poison-tolerant: a panicking prior sample must not crash the app on
+        // every subsequent 1-second poll tick.
+        let mut sys = self.sys.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         sys.refresh_cpu_usage();
         sys.refresh_memory();
 

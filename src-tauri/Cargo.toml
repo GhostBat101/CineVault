@@ -1,6 +1,6 @@
 [package]
 name = "cinevault-core"
-version = "0.1.3"
+version = "0.3.21"
 description = "CineVault Native Desktop Host & Local AI Narrative Engine"
 authors = ["GhostBat101"]
 edition = "2021"
@@ -8,6 +8,17 @@ edition = "2021"
 [lib]
 name = "cinevault_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Feature gates:
+#   default        - template-based analysis (no native ML deps; always compiles)
+#   real-inference - genuine GGUF token generation via llama-cpp-2.
+#     Build: `cargo build --features real-inference`
+#     Requires a C/C++ toolchain + cmake at build time (llama.cpp is compiled
+#     from source by llama-cpp-sys). GPU path uses CUDA/Vulkan only if those
+#     features are enabled on the sys crate; otherwise CPU inference.
+[features]
+default = []
+real-inference = ["dep:llama-cpp-2"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -28,3 +39,7 @@ directories = "5.0"
 sha2 = "0.10"
 futures-util = "0.3"
 urlencoding = "2.1"
+url = "2.5"
+# Optional: real GGUF inference engine (enabled via `real-inference` feature).
+# Tracks llama.cpp releases; a C/C++ toolchain + cmake are REQUIRED at build time.
+llama-cpp-2 = { version = "0.1", optional = true }

@@ -1,41 +1,105 @@
-import { memo } from 'react';
-import { Media } from '../../types';
-import { Star, Clock, Sparkles } from 'lucide-react';
+﻿/**
+ * deck/MediaCard.tsx
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * WHAT: Single poster card in the dashboard grid. Shows poster (with offline
+ *       fallback tile + bottom scrim), rating pill, watch-status pill (CLICK
+ *       TO CYCLE), title/year/runtime meta, and a Director's Suite shortcut.
+ *
+ * INTERACTION NOTES:
+ *   - Hover/focus lift is PURE CSS: root carries .glass-panel.cv-lift and the
+ *     poster <img> carries .cv-zoom-img (see index.css). No JS mouse handlers.
+ *   - The card root is a focusable button-like article. Its keydown handler
+ *     IGNORES events that bubble from nested interactive children (the status
+ *     pill / suite button) - this fixes Enter/Space being hijacked from them.
+ *   - All callbacks arrive pre-stabilized via useCallback from MediaGrid so
+ *     React.memo short-circuits unrelated re-renders. `style` must likewise
+ *     be a stable reference (MediaGrid passes a module constant).
+ *
+ * USES:    types/index.ts, utils/poster.ts, index.css (.glass-panel, .cv-lift,
+ *          .poster-scrim, .cv-zoom-img).
+ * USED BY: deck/MediaGrid.tsx.
+ */
+import { memo, useState } from 'react';
+import { Media, WatchStatus } from '../../types';
+import { getPosterSrc } from '../../utils/poster';
+import { Star, Clock, Sparkles, Heart } from 'lucide-react';
 
 interface MediaCardProps {
+  /** Entity rendered by this card. */
   media: Media;
-  onClick: () => void;
-  onOpenDirectorSuite?: () => void;
+  /** Open the detail modal for this media (stable callback). */
+  onClick: (media: Media) => void;
+  /** Jump to Director's Suite for this media (stable callback, optional). */
+  onOpenDirectorSuite?: (media: Media) => void;
+  /** Persist a new watch status after the user cycles the status pill. */
+  onStatusChange?: (media: Media, nextStatus: WatchStatus) => void;
+  /**
+   * Optional inline style merged onto the card root (e.g. height:'100%' from
+   * the stagger wrapper). Pass a STABLE object reference to keep memo effective.
+   */
+  style?: React.CSSProperties;
+}
+
+/** Cycle order used by the clickable status pill. */
+const STATUS_CYCLE: WatchStatus[] = ['plan_to_watch', 'watching', 'completed', 'dropped'];
+
+/** Semantic color token for each watch status. */
+function getStatusColor(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'var(--status-success)';
+    case 'watching':
+      return 'var(--status-warning)';
+    case 'plan_to_watch':
+      return 'var(--accent)';
+    case 'dropped':
+      return 'var(--status-danger)';
+    default:
+      return 'var(--text-muted)';
+  }
 }
 
 export const MediaCard = memo<MediaCardProps>(({
   media,
   onClick,
   onOpenDirectorSuite,
+  onStatusChange,
+  style,
 }) => {
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'watched': return 'var(--status-success)';
-      case 'watching': return 'var(--status-warning)';
-      case 'plan_to_watch': return 'var(--accent)';
-      case 'dropped': return 'var(--status-danger)';
-      default: return 'var(--text-muted)';
+  /** True once the resolved poster src has failed to load -> show fallback tile. */
+  const [posterFailed, setPosterFailed] = useState(false);
+  /** Best available poster source: local cache first, remote URL second. */
+  const posterSrc = getPosterSrc(media);
+
+  /** Next status in the cycle, for tooltip copy. */
+  const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(media.userStatus) + 1) % STATUS_CYCLE.length];
+
+  /**
+   * Card-level keydown: activate ONLY when the event originates from the
+   * card itself, never from a nested button (prevents keyboard hijack).
+   */
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onClick(media);
     }
+  };
+
+  /** Cycle watch status without triggering the card's open-detail action. */
+  const handleStatusClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onStatusChange) onStatusChange(media, nextStatus);
   };
 
   return (
     <article
-      onClick={onClick}
+      onClick={() => onClick(media)}
       tabIndex={0}
       role="button"
       aria-label={`Open details for ${media.title}`}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onClick();
-        }
-      }}
-      className="glass-panel"
+      onKeyDown={handleKeyDown}
+      className="glass-panel cv-lift"
       style={{
         borderRadius: 'var(--radius-md)',
         overflow: 'hidden',
@@ -45,22 +109,12 @@ export const MediaCard = memo<MediaCardProps>(({
         flexDirection: 'column',
         position: 'relative',
         backgroundColor: 'var(--bg-secondary)',
-        border: '1px solid var(--border-subtle)',
-        outline: 'none',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'translateY(-4px)';
-        e.currentTarget.style.borderColor = 'var(--accent)';
-        e.currentTarget.style.boxShadow = '0 12px 24px -8px rgba(0, 0, 0, 0.5)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = 'translateY(0)';
-        e.currentTarget.style.borderColor = 'var(--border-subtle)';
-        e.currentTarget.style.boxShadow = 'none';
+        ...style,
       }}
     >
-      {/* Poster Container */}
+      {/* Poster Container - .poster-scrim adds the bottom readability gradient */}
       <div
+        className="poster-scrim"
         style={{
           width: '100%',
           aspectRatio: '2/3',
@@ -69,19 +123,21 @@ export const MediaCard = memo<MediaCardProps>(({
           overflow: 'hidden',
         }}
       >
-        {media.posterUrl ? (
+        {posterSrc && !posterFailed ? (
           <img
-            src={media.posterUrl}
+            src={posterSrc}
             alt={`${media.title} poster`}
             loading="lazy"
+            onError={() => setPosterFailed(true)}
+            className="cv-zoom-img"
             style={{
               width: '100%',
               height: '100%',
               objectFit: 'cover',
-              transition: 'transform var(--transition-normal)',
             }}
           />
         ) : (
+          // Fallback tile when no poster exists OR the URL failed offline.
           <div
             style={{
               width: '100%',
@@ -93,17 +149,18 @@ export const MediaCard = memo<MediaCardProps>(({
               color: 'var(--text-muted)',
             }}
           >
-            🎬
+            ðŸŽ¬
           </div>
         )}
 
-        {/* Rating Pill */}
-        {media.imdbRating && (
+        {/* Rating Pill (zIndex 1 keeps it above the .poster-scrim gradient) */}
+        {typeof media.imdbRating === 'number' && (
           <div
             style={{
               position: 'absolute',
               top: '8px',
               right: '8px',
+              zIndex: 1,
               backgroundColor: 'rgba(9, 10, 15, 0.85)',
               backdropFilter: 'blur(8px)',
               padding: '3px 7px',
@@ -123,30 +180,89 @@ export const MediaCard = memo<MediaCardProps>(({
           </div>
         )}
 
-        {/* Status Badge */}
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '8px',
-            left: '8px',
-            backgroundColor: 'rgba(9, 10, 15, 0.85)',
-            backdropFilter: 'blur(8px)',
-            padding: '2px 6px',
-            borderRadius: 'var(--radius-xs)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            fontSize: '10px',
-            fontWeight: 600,
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-            color: getStatusColor(media.userStatus),
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-          }}
-        >
-          <span style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: getStatusColor(media.userStatus) }} />
-          <span>{media.userStatus.replace('_', ' ')}</span>
-        </div>
+        {/* Favorite heart badge (top-left, above scrim) */}
+        {media.isFavorite && (
+          <div
+            title="Favorited"
+            style={{
+              position: 'absolute',
+              top: '8px',
+              left: '8px',
+              zIndex: 1,
+              backgroundColor: 'rgba(9, 10, 15, 0.85)',
+              backdropFilter: 'blur(8px)',
+              padding: '4px 6px',
+              borderRadius: 'var(--radius-xs)',
+              display: 'flex',
+              alignItems: 'center',
+              color: 'var(--status-danger)',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
+            }}
+          >
+            <Heart size={11} fill="currentColor" />
+          </div>
+        )}
+
+        {/* Personal rating pill (bottom-right, distinct gold-free accent) */}
+        {typeof media.userRating === 'number' && (
+          <div
+            title={`Your rating: ${media.userRating}/10`}
+            style={{
+              position: 'absolute',
+              bottom: '8px',
+              right: '8px',
+              zIndex: 1,
+              backgroundColor: 'rgba(9, 10, 15, 0.85)',
+              backdropFilter: 'blur(8px)',
+              padding: '3px 7px',
+              borderRadius: 'var(--radius-xs)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '3px',
+              fontSize: '11px',
+              fontWeight: 700,
+              color: 'var(--accent)',
+              fontFamily: 'var(--font-mono)',
+              border: '1px solid var(--border-active)',
+            }}
+          >
+            <span>{media.userRating}</span>
+            <span style={{ fontSize: '9px', opacity: 0.7 }}>YOU</span>
+          </div>
+        )}
+
+        {/* Status Pill - click to cycle watch status (zIndex above scrim) */}
+        {onStatusChange && (
+          <button
+            onClick={handleStatusClick}
+            onKeyDown={(e) => e.stopPropagation()}
+            aria-label={`Watch status: ${media.userStatus.replace('_', ' ')}. Activate to change to ${nextStatus.replace('_', ' ')}.`}
+            title={`Click to mark as "${nextStatus.replace('_', ' ')}"`}
+            style={{
+              position: 'absolute',
+              bottom: '8px',
+              left: '8px',
+              zIndex: 1,
+              backgroundColor: 'rgba(9, 10, 15, 0.85)',
+              backdropFilter: 'blur(8px)',
+              padding: '2px 6px',
+              borderRadius: 'var(--radius-xs)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontSize: '10px',
+              fontWeight: 600,
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              color: getStatusColor(media.userStatus),
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: getStatusColor(media.userStatus) }} />
+            <span>{media.userStatus.replace('_', ' ')}</span>
+          </button>
+        )}
       </div>
 
       {/* Info Body */}
@@ -180,7 +296,7 @@ export const MediaCard = memo<MediaCardProps>(({
             {media.year && <span>{media.year}</span>}
             {media.runtimeMinutes && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                <span>•</span>
+                <span>â€¢</span>
                 <Clock size={10} />
                 <span>{media.runtimeMinutes}m</span>
               </div>
@@ -193,8 +309,9 @@ export const MediaCard = memo<MediaCardProps>(({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onOpenDirectorSuite();
+              onOpenDirectorSuite(media);
             }}
+            onKeyDown={(e) => e.stopPropagation()}
             aria-label={`Open Director Suite for ${media.title}`}
             style={{
               marginTop: '6px',

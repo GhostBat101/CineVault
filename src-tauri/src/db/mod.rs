@@ -1,35 +1,23 @@
-pub mod schema;
+//! db/mod.rs
+//! ─────────────────────────────────────────────────────────────
+//! WHAT: Database module root. Re-exports [`repository::Repository`],
+//!       the single owner of the SQLite connection and ALL persistence
+//!       logic (schema migrations, CRUD, settings store, import/export).
+//!
+//! DESIGN NOTES:
+//!   - `Repository::run_migrations` (db/repository.rs) is THE one migration
+//!     entry point. Schema versioning is tracked with SQLite's built-in
+//!     `PRAGMA user_version`, so future migrations slot into a simple
+//!     ascending match ladder there.
+//!   - The former `DatabaseManager` struct and static `INITIAL_SCHEMA`
+//!     string lived here; both were deleted because they duplicated
+//!     repository state, created a second migration path, and had no
+//!     callers. Do not reintroduce parallel schema definitions.
+//!
+//! USES:    db::repository.
+//! USED BY: src-tauri/src/lib.rs (constructs + manages Repository),
+//!          src-tauri/src/commands/mod.rs (DB commands).
+
 pub mod repository;
 
 pub use repository::*;
-
-use rusqlite::{Connection, Result};
-use std::path::Path;
-
-pub struct DatabaseManager {
-    conn: Connection,
-}
-
-impl DatabaseManager {
-    pub fn init<P: AsRef<Path>>(db_path: P) -> Result<Self> {
-        let conn = Connection::open(db_path)?;
-        
-        // Enforce WAL mode and Foreign Keys
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
-        
-        let manager = Self { conn };
-        manager.run_migrations()?;
-        Ok(manager)
-    }
-
-    fn run_migrations(&self) -> Result<()> {
-        self.conn.execute_batch(schema::INITIAL_SCHEMA)?;
-        Ok(())
-    }
-
-    pub fn connection(&self) -> &Connection {
-        &self.conn
-    }
-}

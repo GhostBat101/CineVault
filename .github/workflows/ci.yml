@@ -1,0 +1,90 @@
+# CI — Verification Gates
+# ─────────────────────────────────────────────────────────────
+# WHAT: Blocking quality gates on every push + manual dispatch. Three parallel
+#       jobs: frontend typecheck/build/tests, default Rust compile, and the
+#       feature-gated real-inference compile. A red job here means DO NOT
+#       release (GEMINI.md protocol stays gated on this being green).
+#
+# NOTE: Rust jobs run on windows-latest because the tauri/llama.cpp dependency
+#       stack targets MSVC; the runner images ship the required MSVC Build
+#       Tools, CMake, and NSIS preinstalled - zero apt-get/choco setup needed.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 1. Frontend: strict typecheck + production build + unit tests ────────
+  frontend:
+    name: Frontend (tsc + vite + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+
+      - name: Typecheck + build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+  # ── 2. Rust: default feature set compiles ────────────────────────────────
+  rust-default:
+    name: Rust check (default)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Cache cargo registry/target keyed on Cargo.lock + crate manifests.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo check (default features)
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+  # ── 3. Rust: real GGUF inference feature compiles (BLOCKING) ────────────
+  # Red here means llama_engine.rs has drifted from the llama-cpp-2 API -
+  # fix before releasing. Runner provides cmake + MSVC for llama.cpp.
+  rust-real-inference:
+    name: Rust check (real-inference)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Verify cmake availability (llama.cpp prerequisite)
+        shell: pwsh
+        run: |
+          cmake --version
+          if (-not $?) { throw 'cmake missing from runner image' }
+
+      - name: cargo check (--features real-inference)
+        working-directory: src-tauri
+        run: cargo check --features real-inference

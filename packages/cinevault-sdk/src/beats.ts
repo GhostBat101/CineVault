@@ -1,14 +1,14 @@
-import { BeatSheetFramework, BeatTemplate, CalculatedBeatTimestamp } from './types';
+﻿import { BeatSheetFramework, BeatTemplate, CalculatedBeatTimestamp } from './types';
 
 export const SAVE_THE_CAT_BEATS: BeatTemplate[] = [
   { name: 'Opening Image', act: 'Act 1', targetPercentage: 1, description: 'A snapshot of the protagonist and their world before the transformation begins.' },
   { name: 'Theme Stated', act: 'Act 1', targetPercentage: 5, description: 'What the story is truly about; the life lesson the protagonist must learn.' },
   { name: 'Set-Up', act: 'Act 1', targetPercentage: 10, description: 'Introduce all primary characters, flaws, and the status quo.' },
-  { name: 'Catalyst', act: 'Act 1', targetPercentage: 12, description: 'The inciting incident that knocks the protagonist’s world out of balance.' },
+  { name: 'Catalyst', act: 'Act 1', targetPercentage: 12, description: 'The inciting incident that knocks the protagonistâ€™s world out of balance.' },
   { name: 'Debate', act: 'Act 1', targetPercentage: 20, description: 'The protagonist hesitates or debates whether to take on the journey.' },
   { name: 'Break into Two', act: 'Act 1', targetPercentage: 25, description: 'The protagonist makes a deliberate choice and steps into the special world.' },
   { name: 'B Story', act: 'Act 2', targetPercentage: 30, description: 'Introduction of the secondary narrative/relationship that carries the theme.' },
-  { name: 'Fun and Games', act: 'Act 2', targetPercentage: 50, description: 'The promise of the premise; core set-pieces and exploration.' },
+  { name: 'Fun and Games', act: 'Act 2', targetPercentage: 40, description: 'The promise of the premise; core set-pieces and exploration.' },
   { name: 'Midpoint', act: 'Act 2', targetPercentage: 50, description: 'False victory or false defeat; stakes escalate dramatically.' },
   { name: 'Bad Guys Close In', act: 'Act 2', targetPercentage: 65, description: 'Internal and external pressure mounts against the protagonist.' },
   { name: 'All Is Lost', act: 'Act 2', targetPercentage: 75, description: 'The lowest point; the whiff of death; all hope seems gone.' },

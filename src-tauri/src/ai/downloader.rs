@@ -1,3 +1,20 @@
+//! ai/downloader.rs
+//! ─────────────────────────────────────────────────────────────
+//! WHAT: Resilient GGUF model downloader. Streams weights to a `.part` temp
+//!       file, hashes content WHILE downloading, verifies SHA-256 (fail-closed)
+//!       and only then atomically renames into the Model Vault.
+//!
+//! SAFETY PROPERTIES:
+//!   - Hash verification is STREAMED (constant memory; no whole-file read).
+//!   - Fresh downloads are verified too - a cleanly-truncated body fails.
+//!   - The final model filename appears on disk only via atomic rename of the
+//!     fully-verified .part file; interrupted attempts never leave a file that
+//!     could later pass an existence check.
+//!
+//! USES:    reqwest (stream), sha2, tokio/fs, logger.
+//! USED BY: src-tauri/src/commands/mod.rs (download_ai_model,
+//!          generate_ai_summary first-use auto-download).
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -5,6 +22,7 @@ use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
 use crate::logger::Logger;
 
+/// Progress payload emitted through the `model_download_progress` event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadProgress {
@@ -19,15 +37,19 @@ pub struct DownloadProgress {
     pub max_attempts: u32,
 }
 
+/// Maximum retry attempts for a single model download.
+const MAX_RETRIES: u32 = 5;
+
 pub struct ModelDownloader;
 
 impl ModelDownloader {
+    /// Cheap connectivity probe used before any download starts.
     pub async fn is_internet_connected() -> bool {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             .build();
-        
+
         if let Ok(client) = client {
             if let Ok(resp) = client.head("https://huggingface.co").send().await {
                 return resp.status().is_success() || resp.status().is_redirection();
@@ -39,6 +61,8 @@ impl ModelDownloader {
         false
     }
 
+    /// Download `filename` from `download_url` into `dest_dir`, verifying it
+    /// against `expected_sha256`. Returns the final verified path.
     pub async fn download_gguf_model<F>(
         download_url: &str,
         dest_dir: &Path,
@@ -62,8 +86,9 @@ impl ModelDownloader {
             .map_err(|e| format!("Failed to create Model Vault dir: {}", e))?;
 
         let target_path = dest_dir.join(filename);
+        let part_path = dest_dir.join(format!("{}.part", filename));
 
-        // Check if file exists and verify checksum
+        // Already-downloaded files are re-verified before being trusted.
         if target_path.exists() {
             Logger::info(&format!("Model file {:?} already exists on disk. Verifying SHA-256 integrity...", target_path));
             if Self::verify_file_sha256(&target_path, expected_sha256).await {
@@ -77,22 +102,38 @@ impl ModelDownloader {
                     is_completed: true,
                     error: None,
                     attempt: 1,
-                    max_attempts: 5,
+                    max_attempts: MAX_RETRIES,
                 });
                 return Ok(target_path);
-            } else {
-                Logger::warn(&format!("Existing file {:?} failed SHA-256 or is incomplete. Removing before download...", target_path));
-                let _ = tokio::fs::remove_file(&target_path).await;
             }
+            Logger::warn(&format!("Existing file {:?} failed SHA-256 or is incomplete. Removing before download...", target_path));
+            let _ = fs::remove_file(&target_path).await;
         }
 
-        // 2. Resilient Download Loop (Up to 5 Retries)
-        let max_retries = 5;
+        // 2. Resilient Download Loop (Up to MAX_RETRIES attempts)
         let mut last_error = String::from("Unknown error");
 
-        for attempt in 1..=max_retries {
-            Logger::info(&format!("Download attempt {}/{} for {}...", attempt, max_retries, filename));
-            Logger::info(&format!("Connecting to source URL: {}", download_url));
+        for attempt in 1..=MAX_RETRIES {
+            Logger::info(&format!("Download attempt {}/{} for {}...", attempt, MAX_RETRIES, filename));
+
+            // Re-check the completed-file fast path on EVERY attempt: a
+            // concurrent download (first-use auto-fetch + manual click) may
+            // have landed a verified file while we were retrying.
+            if target_path.exists() && Self::verify_file_sha256(&target_path, expected_sha256).await {
+                Logger::info(&format!("Model file appeared mid-retry and verifies - reusing {:?}.", target_path));
+                progress_callback(DownloadProgress {
+                    model_id: filename.to_string(),
+                    downloaded_bytes: 1,
+                    total_bytes: 1,
+                    percentage: 100.0,
+                    speed_mbps: 0.0,
+                    is_completed: true,
+                    error: None,
+                    attempt,
+                    max_attempts: MAX_RETRIES,
+                });
+                return Ok(target_path);
+            }
 
             let client = match reqwest::Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -132,16 +173,18 @@ impl ModelDownloader {
             let total_bytes = response.content_length().unwrap_or(0);
             let mut downloaded_bytes = 0u64;
 
-            let file_result = File::create(&target_path).await;
+            // Stream into the .part file - never directly onto the final name.
+            let file_result = File::create(&part_path).await;
             let mut file = match file_result {
                 Ok(f) => f,
                 Err(e) => {
-                    last_error = format!("Failed to create model file on disk: {}", e);
+                    last_error = format!("Failed to create part file on disk: {}", e);
                     Logger::error(&last_error);
                     break;
                 }
             };
 
+            let mut hasher = Sha256::new(); // streamed hashing while writing
             let mut stream = response.bytes_stream();
             use futures_util::StreamExt;
             let start_time = std::time::Instant::now();
@@ -152,6 +195,7 @@ impl ModelDownloader {
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
                     Ok(chunk) => {
+                        hasher.update(&chunk);
                         if let Err(e) = file.write_all(&chunk).await {
                             last_error = format!("Error writing chunk to disk: {}", e);
                             Logger::error(&last_error);
@@ -180,7 +224,7 @@ impl ModelDownloader {
                             last_log_time = std::time::Instant::now();
                         }
 
-                        // Throttle IPC emission to ~12 updates per second (80ms) to prevent IPC message queue congestion
+                        // Throttle IPC emission to ~12 updates per second (80ms).
                         if last_emit_time.elapsed().as_millis() >= 80 {
                             progress_callback(DownloadProgress {
                                 model_id: filename.to_string(),
@@ -191,7 +235,7 @@ impl ModelDownloader {
                                 is_completed: false,
                                 error: None,
                                 attempt,
-                                max_attempts: max_retries,
+                                max_attempts: MAX_RETRIES,
                             });
                             last_emit_time = std::time::Instant::now();
                         }
@@ -206,8 +250,42 @@ impl ModelDownloader {
             }
 
             if stream_success && downloaded_bytes > 0 {
-                let _ = file.flush().await;
-                Logger::info(&format!("Download completed successfully for {} on attempt {}/{} ({} bytes)", filename, attempt, max_retries, downloaded_bytes));
+                // Flush failures go through the retry path like any other
+                // error - returning early would skip remaining attempts AND
+                // orphan the .part file.
+                if let Err(e) = file.flush().await {
+                    last_error = format!("Flush error: {}", e);
+                    Logger::error(&last_error);
+                    let _ = fs::remove_file(&part_path).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(attempt as u64 * 1500)).await;
+                    continue;
+                }
+                drop(file);
+
+                // FAIL-CLOSED verification of freshly downloaded bytes.
+                let hash_hex = format!("{:x}", hasher.finalize());
+                let hash_matches = expected_sha256.is_empty()
+                    || hash_hex.eq_ignore_ascii_case(expected_sha256);
+
+                if !hash_matches {
+                    last_error = format!(
+                        "SHA-256 MISMATCH after download: expected {}, got {}",
+                        expected_sha256, hash_hex
+                    );
+                    Logger::error(&last_error);
+                    let _ = fs::remove_file(&part_path).await;
+                    continue; // retry from scratch; corrupted body never lands
+                }
+
+                // Atomic promote: verified .part -> final model path.
+                if let Err(e) = fs::rename(&part_path, &target_path).await {
+                    last_error = format!("Failed to finalize model file: {}", e);
+                    Logger::error(&last_error);
+                    let _ = fs::remove_file(&part_path).await;
+                    continue;
+                }
+
+                Logger::info(&format!("Download completed + verified for {} on attempt {}/{} ({} bytes)", filename, attempt, MAX_RETRIES, downloaded_bytes));
                 progress_callback(DownloadProgress {
                     model_id: filename.to_string(),
                     downloaded_bytes,
@@ -217,31 +295,47 @@ impl ModelDownloader {
                     is_completed: true,
                     error: None,
                     attempt,
-                    max_attempts: max_retries,
+                    max_attempts: MAX_RETRIES,
                 });
                 return Ok(target_path);
             }
 
-            // Clean up partial file before retry
-            let _ = tokio::fs::remove_file(&target_path).await;
+            // Clean up the partial file before retrying.
+            let _ = fs::remove_file(&part_path).await;
             tokio::time::sleep(std::time::Duration::from_millis(attempt as u64 * 1500)).await;
         }
 
-        let fatal_err = format!("DOWNLOAD_FAILED_AFTER_RETRIES: Failed after 5 download attempts for {}. Last error: {}", filename, last_error);
+        let fatal_err = format!(
+            "DOWNLOAD_FAILED_AFTER_RETRIES: Failed after {} download attempts for {}. Last error: {}",
+            MAX_RETRIES, filename, last_error
+        );
         Logger::error(&fatal_err);
         Err(fatal_err)
     }
 
+    /// Streamed SHA-256 verification (constant memory even for multi-GB models).
     pub async fn verify_file_sha256(path: &Path, expected_hash: &str) -> bool {
         if expected_hash.is_empty() {
             return true;
         }
-        if let Ok(bytes) = fs::read(path).await {
-            let mut hasher = Sha256::new();
-            hasher.update(&bytes);
-            let hash_hex = format!("{:x}", hasher.finalize());
-            return hash_hex.eq_ignore_ascii_case(expected_hash);
+        use tokio::io::AsyncReadExt;
+
+        let mut file = match File::open(path).await {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+
+        let mut hasher = Sha256::new();
+        let mut buffer = vec![0u8; 1024 * 1024]; // 1 MiB chunks
+        loop {
+            match file.read(&mut buffer).await {
+                Ok(0) => break, // EOF
+                Ok(read) => hasher.update(&buffer[..read]),
+                Err(_) => return false,
+            }
         }
-        false
+
+        let hash_hex = format!("{:x}", hasher.finalize());
+        hash_hex.eq_ignore_ascii_case(expected_hash)
     }
 }

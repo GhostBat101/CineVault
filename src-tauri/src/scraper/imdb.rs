@@ -1,6 +1,30 @@
+//! scraper/imdb.rs
+//! ─────────────────────────────────────────────────────────────
+//! WHAT: IMDb metadata extraction. [`ImdbScraper::scrape_url`] resolves a
+//!       title from a user-supplied URL or bare id, parses schema.org
+//!       JSON-LD first, falls back to DOM scraping, then to IMDb's public
+//!       suggestion API, enriching synopses via Wikipedia.
+//!
+//! DESIGN NOTES:
+//!   - The whole flow is wrapped in a [`SCRAPE_TIMEOUT_SECS`] budget so a
+//!     hung network can never wedge the command forever.
+//!   - ID extraction is a strict hand-rolled scanner (the crate has NO
+//!     `regex` dependency): it only accepts `tt` followed by 7..=10 ASCII
+//!     digits, not glued into a longer token, anywhere in the input.
+//!   - `poster_local_path` is populated by the caller (commands/mod.rs)
+//!     after best-effort local caching; this module always leaves it None.
+//!
+//! USES:    reqwest, scraper (DOM), serde_json, tokio (timeout), urlencoding.
+//! USED BY: src-tauri/src/commands/mod.rs (`extract_imdb`),
+//!          src/types/index.ts mirrors ScrapedMedia as its TS contract.
+
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT, ACCEPT, ACCEPT_LANGUAGE};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
+
+/// Whole-flow ceiling (HTML parse attempt + suggestion-API fallback) before
+/// the scrape is abandoned with a clear timeout error.
+const SCRAPE_TIMEOUT_SECS: u64 = 25;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +37,8 @@ pub struct ScrapedMedia {
     pub runtime_minutes: Option<i32>,
     pub imdb_rating: Option<f32>,
     pub poster_url: Option<String>,
+    /// Local cached copy path (set by commands/mod.rs post-scrape; null until then).
+    pub poster_local_path: Option<String>,
     pub synopsis: Option<String>,
     pub genres: Vec<String>,
     pub directors: Vec<String>,
@@ -30,7 +56,24 @@ pub struct ScrapedCastMember {
 pub struct ImdbScraper;
 
 impl ImdbScraper {
+    /// Scrape a title with a hard [`SCRAPE_TIMEOUT_SECS`] ceiling around the
+    /// entire flow (network + parsing + Wikipedia enrichment).
     pub async fn scrape_url(imdb_input: &str) -> Result<ScrapedMedia, String> {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(SCRAPE_TIMEOUT_SECS),
+            Self::scrape_url_inner(imdb_input),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(format!(
+                "IMDb scrape timed out after {} seconds. Please check your internet connection and try again.",
+                SCRAPE_TIMEOUT_SECS
+            )),
+        }
+    }
+
+    async fn scrape_url_inner(imdb_input: &str) -> Result<ScrapedMedia, String> {
         let imdb_id = Self::extract_imdb_id(imdb_input)
             .ok_or_else(|| "Invalid IMDb URL or ID. Please provide a valid title ID (e.g. tt0120655) or IMDb link.".to_string())?;
 
@@ -78,18 +121,47 @@ impl ImdbScraper {
         Self::fetch_suggestion_api(&imdb_id).await
     }
 
+    /**
+     * Extract a canonical IMDb title id (`tt` + 7..=10 ASCII digits) from
+     * raw user input. Accepts a bare id ("tt0117731") or any URL containing
+     * one ("/title/tt0117731/?ref_=..."). Input is trimmed first.
+     *
+     * Hand-rolled scan (no `regex` dependency in this crate): walk ASCII
+     * bytes, require the "tt" to not be glued into a longer alphanumeric
+     * token, then take the digit run and accept it only when 7..=10 long
+     * AND not followed by another digit (so an 11+ digit run is rejected
+     * rather than truncated). Slicing is boundary-safe: only ASCII bytes
+     * ('t', digits) are ever indexed.
+     */
     pub fn extract_imdb_id(input: &str) -> Option<String> {
         let trimmed = input.trim();
-        if trimmed.starts_with("tt") && trimmed.len() >= 7 {
-            let id: String = trimmed.chars().take_while(|c| c.is_alphanumeric()).collect();
-            return Some(id);
-        }
-        if let Some(pos) = input.find("tt") {
-            let sub = &input[pos..];
-            let id: String = sub.chars().take_while(|c| c.is_alphanumeric()).collect();
-            if id.starts_with("tt") && id.len() >= 7 {
-                return Some(id);
+        let bytes = trimmed.as_bytes();
+
+        let mut i = 0;
+        while i + 2 <= bytes.len() {
+            let prev_alnum = i > 0 && bytes[i - 1].is_ascii_alphanumeric();
+            // Accept both lowercase and UPPERCASE tt prefixes.
+            let is_tt = (bytes[i] == b't' || bytes[i] == b'T')
+                && (bytes[i + 1] == b't' || bytes[i + 1] == b'T');
+            if !prev_alnum && is_tt {
+                // Consume at most 10 digits after "tt".
+                let mut end = i + 2;
+                while end < bytes.len()
+                    && end - (i + 2) < 10
+                    && bytes[end].is_ascii_digit()
+                {
+                    end += 1;
+                }
+                let digit_count = end - (i + 2);
+                let next_is_digit = bytes
+                    .get(end)
+                    .map(|b| b.is_ascii_digit())
+                    .unwrap_or(false);
+                if digit_count >= 7 && !next_is_digit {
+                    return Some(trimmed[i..end].to_string());
+                }
             }
+            i += 1;
         }
         None
     }
@@ -102,11 +174,14 @@ impl ImdbScraper {
             .ok()?;
 
         let clean_title = title.replace(' ', "_");
+        // Wikipedia's REST API 404s on %3A - colons must stay literal in the
+        // path ("Spider-Man: Across the Spider-Verse").
+        let wiki_title = urlencoding::encode(&clean_title).replace("%3A", ":");
         let candidates = vec![
-            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}", urlencoding::encode(&clean_title)),
-            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_(film)", urlencoding::encode(&clean_title)),
-            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_({}_film)", urlencoding::encode(&clean_title), year.unwrap_or(2024)),
-            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_(TV_series)", urlencoding::encode(&clean_title)),
+            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}", wiki_title),
+            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_(film)", wiki_title),
+            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_({}_film)", wiki_title, year.unwrap_or(2024)),
+            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_\(TV_series)", wiki_title),
         ];
 
         for url in candidates {
@@ -171,11 +246,15 @@ impl ImdbScraper {
                             original_title: None,
                             year,
                             media_type,
-                            runtime_minutes: Some(120),
-                            imdb_rating: Some(8.2),
+                            // Data honesty: the suggestion API cannot supply
+                            // runtime/rating/genres - leave them EMPTY rather
+                            // than fabricating plausible-looking values.
+                            runtime_minutes: None,
+                            imdb_rating: None,
                             poster_url,
+                            poster_local_path: None,
                             synopsis: Some(synopsis),
-                            genres: vec!["Drama".to_string(), "Cinema".to_string()],
+                            genres: vec![],
                             directors: vec![],
                             cast_members,
                         });
@@ -232,9 +311,11 @@ impl ImdbScraper {
                         })
                         .unwrap_or_default();
 
+                    // Schema.org emits `director`/`actor` as an ARRAY when
+                    // multiple, but a SINGLE OBJECT when there is exactly one.
                     let mut directors = Vec::new();
-                    if let Some(dirs) = value.get("director").and_then(|d| d.as_array()) {
-                        for d in dirs {
+                    if let Some(dirs) = value.get("director") {
+                        for d in Self::as_json_array(dirs) {
                             if let Some(name) = d.get("name").and_then(|n| n.as_str()) {
                                 directors.push(name.to_string());
                             }
@@ -242,8 +323,8 @@ impl ImdbScraper {
                     }
 
                     let mut cast_members = Vec::new();
-                    if let Some(actors) = value.get("actor").and_then(|a| a.as_array()) {
-                        for actor in actors {
+                    if let Some(actors) = value.get("actor") {
+                        for actor in Self::as_json_array(actors) {
                             if let Some(name) = actor.get("name").and_then(|n| n.as_str()) {
                                 cast_members.push(ScrapedCastMember {
                                     name: name.to_string(),
@@ -263,6 +344,7 @@ impl ImdbScraper {
                         runtime_minutes,
                         imdb_rating,
                         poster_url,
+                        poster_local_path: None,
                         synopsis,
                         genres,
                         directors,
@@ -274,23 +356,56 @@ impl ImdbScraper {
         None
     }
 
+    /**
+     * Normalize a schema.org property into an array of JSON values.
+     * Handles: proper arrays, SINGLE objects (one director/actor), and
+     * bare strings - `.as_array()` alone silently dropped all singletons.
+     */
+    fn as_json_array(value: &serde_json::Value) -> Vec<&serde_json::Value> {
+        match value {
+            serde_json::Value::Array(items) => items.iter().collect(),
+            single @ serde_json::Value::Object(_) => vec![single],
+            _ => vec![],
+        }
+    }
+
     fn parse_iso_duration(iso: &str) -> Option<i32> {
         let clean = iso.trim_start_matches("PT");
         let mut total = 0;
-        if let Some(h_pos) = clean.find('H') {
-            if let Ok(hours) = clean[..h_pos].parse::<i32>() {
+
+        let h_pos = clean.find('H');
+        let m_pos = clean.find('M');
+
+        // Hours: digits immediately before 'H' (or the whole prefix if no M).
+        if let Some(h) = h_pos {
+            if let Ok(hours) = clean[..h].parse::<i32>() {
                 total += hours * 60;
             }
-            if let Some(m_pos) = clean.find('M') {
-                if let Ok(mins) = clean[h_pos + 1..m_pos].parse::<i32>() {
+        }
+
+        // Minutes: digits between 'H' and 'M' (H present, M after it) or
+        // before 'M' when no H exists. Bounds-checked so malformed orders
+        // like "PT1M2H" can NEVER panic the slice.
+        match (h_pos, m_pos) {
+            (Some(h), Some(m)) if m > h => {
+                if let Ok(mins) = clean[h + 1..m].parse::<i32>() {
                     total += mins;
                 }
             }
-        } else if let Some(m_pos) = clean.find('M') {
-            if let Ok(mins) = clean[..m_pos].parse::<i32>() {
-                total += mins;
+            (Some(_), Some(m)) if m < clean.find('H').unwrap() => {
+                // 'M' BEFORE 'H': minutes are the leading digits.
+                if let Ok(mins) = clean[..m].parse::<i32>() {
+                    total += mins;
+                }
             }
+            (None, Some(m)) => {
+                if let Ok(mins) = clean[..m].parse::<i32>() {
+                    total += mins;
+                }
+            }
+            _ => {}
         }
+
         if total > 0 { Some(total) } else { None }
     }
 
@@ -317,10 +432,109 @@ impl ImdbScraper {
             runtime_minutes: None,
             imdb_rating: None,
             poster_url: None,
+            poster_local_path: None,
             synopsis,
             genres: vec![],
             directors: vec![],
             cast_members: vec![],
         })
+    }
+}
+
+// ── TESTS ───────────────────────────────────────────────────────────────────
+// Contract for ID extraction: bare IDs, full URLs, surrounding punctuation,
+// and the 7-10 digit validity window. Junk input must yield None, never a
+// partial or fabricated ID (a wrong ID silently ingests the wrong movie).
+
+#[cfg(test)]
+mod tests {
+    use super::ImdbScraper;
+
+    #[test]
+    fn accepts_bare_ids_within_digit_window() {
+        assert_eq!(ImdbScraper::extract_imdb_id("tt1375666"), Some("tt1375666".to_string()));
+        assert_eq!(ImdbScraper::extract_imdb_id("tt0120655"), Some("tt0120655".to_string()));
+        // 10 digits is the accepted maximum.
+        assert_eq!(
+            ImdbScraper::extract_imdb_id("tt1234567890"),
+            Some("tt1234567890".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_ids_outside_the_digit_window() {
+        // 6 digits - too short.
+        assert_eq!(ImdbScraper::extract_imdb_id("tt123456"), None);
+        // 11 digits - too long; the greedy-but-capped scan must NOT match.
+        assert_eq!(ImdbScraper::extract_imdb_id("tt12345678901"), None);
+    }
+
+    #[test]
+    fn extracts_from_full_urls() {
+        assert_eq!(
+            ImdbScraper::extract_imdb_id("https://www.imdb.com/title/tt1375666/"),
+            Some("tt1375666".to_string())
+        );
+        assert_eq!(
+            ImdbScraper::extract_imdb_id("imdb.com/title/tt0816692/?ref_=foo"),
+            Some("tt0816692".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_lookalikes_inside_larger_tokens() {
+        // 'tt' preceded by an alphanumeric character is not an ID start...
+        assert_eq!(ImdbScraper::extract_imdb_id("wordttx123456"), None);
+        // ...and trailing digits glued to a longer number are rejected by the
+        // next_is_digit guard.
+        assert_eq!(ImdbScraper::extract_imdb_id("att1234567x"), None);
+    }
+
+    #[test]
+    fn junk_input_yields_none() {
+        assert_eq!(ImdbScraper::extract_imdb_id(""), None);
+        assert_eq!(ImdbScraper::extract_imdb_id("   "), None);
+        assert_eq!(ImdbScraper::extract_imdb_id("not a url at all"), None);
+        assert_eq!(ImdbScraper::extract_imdb_id("https://example.com/xyz"), None);
+    }
+}
+
+// ── Regression tests for audit BUG-HIGH-01 / BUG-MED-02 / BUG-MED-03 ───────
+
+#[cfg(test)]
+mod duration_tests {
+    use super::ImdbScraper;
+
+    #[test]
+    fn parses_standard_orders_without_panicking() {
+        assert_eq!(ImdbScraper::parse_iso_duration("PT2H22M"), Some(142));
+        assert_eq!(ImdbScraper::parse_iso_duration("PT2H"), Some(120));
+        assert_eq!(ImdbScraper::parse_iso_duration("PT48M"), Some(48));
+        assert_eq!(ImdbScraper::parse_iso_duration("PT45M30S"), Some(45));
+    }
+
+    #[test]
+    fn malformed_order_must_not_panic_the_slice() {
+        // Historical panic: 'M' before 'H' made [h+1..m] an inverted range.
+        let _ = ImdbScraper::parse_iso_duration("PT1M2H");
+        let _ = ImdbScraper::parse_iso_duration("PTM1H2");
+        // Garbage must simply yield None / no crash.
+        assert_eq!(ImdbScraper::parse_iso_duration(""), None);
+        assert_eq!(ImdbScraper::parse_iso_duration("PTHM"), None);
+    }
+
+    #[test]
+    fn accepts_uppercase_tt_prefixes() {
+        // Scanner preserves the input's casing verbatim.
+        assert_eq!(ImdbScraper::extract_imdb_id("TT0120655"), Some("TT0120655".to_string()));
+        assert_eq!(ImdbScraper::extract_imdb_id("tT1375666"), Some("tT1375666".to_string()));
+    }
+
+    #[test]
+    fn uppercase_ids_are_usable_as_identifiers() {
+        match ImdbScraper::extract_imdb_id("TT1375666") {
+            Some(id) => assert!(id.eq_ignore_ascii_case("tt1375666"), "got: {id}"),
+            None => panic!("uppercase TT must be accepted"),
+        }
     }
 }

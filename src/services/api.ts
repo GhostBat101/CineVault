@@ -1,278 +1,144 @@
+/**
+ * services/api.ts
+ * ─────────────────────────────────────────────────────────────
+ * WHAT: The single gateway between the React frontend and the Rust/Tauri
+ *       backend, plus the GitHub release-update checker. Every IPC call in
+ *       the app goes through `api.*` - there are no other invoke() sites.
+ *
+ * CASING CONTRACT (important):
+ *   - Top-level invoke args are sent camelCase (e.g. `imdbUrl`); Tauri v2
+ *     auto-converts them to the snake_case Rust command parameters.
+ *   - Struct payloads (Media, InferenceRequest, ...) are camelCase on the
+ *     wire because the Rust structs use #[serde(rename_all = "camelCase")].
+ *   NEVER send dual keys "just in case" - mismatches now fail loudly here
+ *   instead of silently producing undefined fields.
+ *
+ * USES:    @tauri-apps/api/core (dynamic import), types/index.ts, version.json.
+ * USED BY: hooks/useMediaLibrary.ts, hooks/useAISummary.ts,
+ *          hooks/useTelemetry.ts, components/deck/IngestModal.tsx,
+ *          components/deck/MediaDetailModal.tsx,
+ *          components/vault/ModelVaultView.tsx,
+ *          components/settings/SettingsView.tsx.
+ *
+ * KEY EXPORTS:
+ *   isTauri()      - true when running inside the Tauri webview (guards
+ *                    event-listener setup; browser dev mode has no IPC).
+ *   api            - typed facade over every Tauri command + update checker.
+ */
+
 import {
   Media,
   HardwareTelemetry,
   ModelVaultStatus,
   AppUpdateInfo,
+  AppSettings,
+  ScrapedMedia,
 } from '../types';
+import { isNewer } from '../utils/semver';
 import versionData from '../../version.json';
 
-// Detect whether the app is executing inside Tauri Webview or standard Browser
+/** True when the app runs inside the Tauri desktop shell (not a plain browser). */
 export const isTauri = () => {
   return typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
 };
 
-// Safe wrapper for Tauri invoke
+/**
+ * Invoke a Tauri command and propagate real failures.
+ * Unlike the previous version of this module there is NO mock fallback:
+ * if the backend errors or the command is unknown the promise rejects and
+ * every caller must handle it (loading/error states live in the callers).
+ */
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (isTauri()) {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      return await invoke<T>(cmd, args);
-    } catch (err) {
-      console.warn(`[Tauri Invoke Fallback] ${cmd} error:`, err);
-      // Fallback to browser handler if Tauri IPC fails
-      return mockInvoke<T>(cmd, args);
-    }
+  if (!isTauri()) {
+    throw new Error(
+      `CineVault requires its desktop runtime. Command "${cmd}" is unavailable outside the Tauri shell.`
+    );
   }
-  // Browser Mock Fallback
-  return mockInvoke<T>(cmd, args);
-}
-
-// Persistent Browser Storage Key for 0-demo database
-const BROWSER_MEDIA_STORAGE_KEY = 'cinevault_media_library';
-
-function getStoredMedia(): Media[] {
   try {
-    const raw = localStorage.getItem(BROWSER_MEDIA_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveStoredMedia(mediaList: Media[]): void {
-  try {
-    localStorage.setItem(BROWSER_MEDIA_STORAGE_KEY, JSON.stringify(mediaList));
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<T>(cmd, args);
   } catch (err) {
-    console.error('Failed to save to localStorage:', err);
+    // Normalize Tauri's error shapes (string | {message} | Error) into Error.
+    if (err instanceof Error) throw err;
+    throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
   }
 }
 
-// Browser Handler for Local Testing & Dev (100% Zero Demo)
-async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  console.log(`[CineVault API] ${cmd}`, args);
-
-  switch (cmd) {
-    case 'get_telemetry':
-      return {
-        cpuUsagePercent: 4.2,
-        ramUsedMb: 1240,
-        ramTotalMb: 16384,
-        gpuName: 'DirectX 12 / Dedicated GPU',
-        vramUsedMb: 920,
-        vramTotalMb: 2048,
-        isVramCritical: false,
-        activeOffloadMode: 'gpu_auto',
-        gpuLayersOffloaded: 28,
-        totalGpuLayers: 28,
-      } as T;
-
-    case 'get_all_media': {
-      return getStoredMedia() as T;
-    }
-
-    case 'extract_imdb': {
-      const input = String(args?.imdb_url || args?.imdbUrl || '').trim();
-      let imdbId = '';
-      if (input.includes('tt')) {
-        const match = input.match(/tt\d+/);
-        if (match) imdbId = match[0];
-      } else if (/^\d+$/.test(input)) {
-        imdbId = `tt${input}`;
-      }
-
-      if (!imdbId) {
-        throw new Error('Invalid IMDb Title ID or URL. Please provide e.g. tt0120655');
-      }
-
-      // Try fetching live IMDb suggestion API
-      try {
-        const firstChar = imdbId.charAt(0).toLowerCase();
-        const res = await fetch(`https://v2.sg.media-imdb.com/suggestion/${firstChar}/${imdbId}.json`);
-        if (res.ok) {
-          const json = await res.json();
-          const entry = json.d?.find((item: Record<string, unknown>) => item.id === imdbId) || json.d?.[0];
-          if (entry) {
-            return {
-              imdb_id: imdbId,
-              title: entry.l || 'Untitled Media',
-              original_title: entry.l,
-              year: entry.y || 2024,
-              runtime_minutes: 136,
-              imdb_rating: 8.7,
-              poster_url: entry.i?.imageUrl || '',
-              synopsis: `Extracted narrative feature starring ${entry.s || 'the ensemble cast'}.`,
-              genres: ['Sci-Fi', 'Action', 'Drama'],
-              directors: [],
-              cast_members: (entry.s || '').split(',').map((name: string) => ({
-                name: name.trim(),
-                character_name: null,
-                avatar_url: null,
-              })).filter((c: { name: string }) => Boolean(c.name)),
-            } as T;
-          }
-        }
-      } catch (networkErr) {
-        console.warn('Direct suggestion fetch failed, using deterministic ID extraction:', networkErr);
-      }
-
-      // Fallback for known titles / offline extraction
-      const fallbackTitles: Record<string, { title: string; year: number; poster: string; cast: string[] }> = {
-        'tt0120655': {
-          title: 'The Matrix',
-          year: 1999,
-          poster: 'https://m.media-amazon.com/images/M/MV5BN2NmN2VhMTQtMDNiOS00NDlhLTliMjgtODE2ZTY0ODQyNDRhXkEyXkFqcGc@._V1_.jpg',
-          cast: ['Keanu Reeves', 'Laurence Fishburne', 'Carrie-Anne Moss', 'Hugo Weaving'],
-        },
-        'tt0816692': {
-          title: 'Interstellar',
-          year: 2014,
-          poster: 'https://m.media-amazon.com/images/M/MV5BYzdjMDAxZGItMjI2My00ODA1LTlkNzItOWFjMDU5ZDJlYWY3XkEyXkFqcGc@._V1_.jpg',
-          cast: ['Matthew McConaughey', 'Anne Hathaway', 'Jessica Chastain'],
-        },
-        'tt1375666': {
-          title: 'Inception',
-          year: 2010,
-          poster: 'https://m.media-amazon.com/images/M/MV5BMjAxMzY3NjcxNF5BMl5BanBnXkFtZTcwNTI5OTM0Mw@@._V1_.jpg',
-          cast: ['Leonardo DiCaprio', 'Joseph Gordon-Levitt', 'Elliot Page'],
-        },
-      };
-
-      const fallback = fallbackTitles[imdbId] || {
-        title: `IMDb Title (${imdbId})`,
-        year: 2024,
-        poster: '',
-        cast: ['Lead Actor', 'Supporting Actor'],
-      };
-
-      return {
-        imdb_id: imdbId,
-        title: fallback.title,
-        original_title: fallback.title,
-        year: fallback.year,
-        runtime_minutes: 120,
-        imdb_rating: 8.5,
-        poster_url: fallback.poster,
-        synopsis: `Extracted metadata for ${fallback.title} (${imdbId}).`,
-        genres: ['Drama', 'Cinema'],
-        directors: [],
-        cast_members: fallback.cast.map((name) => ({ name, character_name: null, avatar_url: null })),
-      } as T;
-    }
-
-    case 'generate_ai_summary': {
-      return {
-        generatedText: 'This narrative features complex character tension, escalating thematic stakes, and a structured three-act dramatic arc.',
-        modelUsed: 'Llama-3.2-1B-Instruct-Q4_K_M',
-        totalTokens: 128,
-      } as T;
-    }
-
-    case 'get_model_vault_status': {
-      return {
-        vaultPath: './models',
-        activeModelId: 'llama-3.2-1b-instruct-q4km',
-        models: [
-          {
-            id: 'llama-3.2-1b-instruct-q4km',
-            name: 'Llama 3.2 1B Instruct',
-            parameterSize: '1.23B',
-            quantization: 'Q4_K_M',
-            fileSizeMb: 808,
-            description: 'Ultra-fast, ultra-lightweight SLM engineered for fast narrative summaries and screenplay beat brainstorming under tight VRAM constraints.',
-            filename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
-            isInstalled: false,
-            isActive: true,
-            downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
-            sha256: '5723b7b8449c25f4a13f70e704874c721c5f3e46c7ad7f5f745778dc652c7ab9',
-          },
-          {
-            id: 'qwen-2.5-1.5b-instruct-q4km',
-            name: 'Qwen 2.5 1.5B Instruct',
-            parameterSize: '1.54B',
-            quantization: 'Q4_K_M',
-            fileSizeMb: 1110,
-            description: 'High-reasoning capacity small language model specialized for complex lore continuity checks, character tension analysis, and nuance.',
-            filename: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
-            isInstalled: false,
-            isActive: false,
-            downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf',
-            sha256: '7c39ad0030a5975db35824b0718d7f999901416bfbf6ff0dbd63f0d463b27b9c',
-          },
-        ],
-      } as T;
-    }
-
-    case 'set_active_ai_model': {
-      return true as T;
-    }
-
-    case 'download_ai_model': {
-      return './models/downloaded_model.gguf' as T;
-    }
-
-    case 'save_media_entry': {
-      const media = args?.media as Media;
-      if (media) {
-        const current = getStoredMedia();
-        const updated = [media, ...current.filter((m) => m.id !== media.id)];
-        saveStoredMedia(updated);
-      }
-      return 'OK' as T;
-    }
-
-    default:
-      return {} as T;
-  }
+/** Shape of the payload accepted by `generate_ai_summary` (mirrors InferenceRequest). */
+export interface InferenceParams {
+  prompt: string;
+  title?: string;
+  genres?: string[];
+  synopsis?: string;
+  mediaType?: string;
+  temperature?: number;
+  maxTokens?: number;
+  /** Correlation id echoed on ai:token events (set per useAISummary instance). */
+  clientId?: string;
 }
 
-// Public API Service
+/** Shape returned by `generate_ai_summary` (mirrors InferenceResponse). */
+export interface InferenceResult {
+  generatedText: string;
+  modelUsed: string;
+  totalTokens: number;
+  generationTimeMs: number;
+}
+
+/** Public API Service - one method per registered Tauri command. */
 export const api = {
-  // Telemetry
+  // ── Telemetry ────────────────────────────────────────────────────────────
   getTelemetry: () => tauriInvoke<HardwareTelemetry>('get_telemetry'),
 
-  // Media & Scraping
+  // ── Media library & scraping ─────────────────────────────────────────────
   getAllMedia: () => tauriInvoke<Media[]>('get_all_media'),
-  extractImdb: (imdbUrl: string) => tauriInvoke<any>('extract_imdb', { imdb_url: imdbUrl, imdbUrl }),
+  extractImdb: (imdbUrl: string) => tauriInvoke<ScrapedMedia>('extract_imdb', { imdbUrl }),
   saveMedia: (media: Media) => tauriInvoke<string>('save_media_entry', { media }),
+  /** Permanently delete one entry; resolves true when a row was removed. */
+  deleteMedia: (mediaId: string) => tauriInvoke<boolean>('delete_media_entry', { mediaId }),
 
-  // Local AI Generation & Model Vault
+  // ── Settings persistence (SQLite app_settings table) ─────────────────────
+  getAppSettings: () => tauriInvoke<AppSettings | null>('get_app_settings'),
+  saveAppSettings: (settings: Partial<AppSettings>) =>
+    tauriInvoke<boolean>('save_app_settings', { settings }),
+
+  // ── Local AI generation & model vault ────────────────────────────────────
   getModelVaultStatus: () => tauriInvoke<ModelVaultStatus>('get_model_vault_status'),
-  setActiveAiModel: (modelId: string) => tauriInvoke<boolean>('set_active_ai_model', { modelId, model_id: modelId }),
-  downloadAiModel: (modelId: string) => tauriInvoke<string>('download_ai_model', { modelId, model_id: modelId }),
-  generateAISummary: (params: { prompt: string; title?: string; genres?: string[]; synopsis?: string; mediaType?: string; temperature?: number; maxTokens?: number } | string, temperature = 0.7, maxTokens = 512) => {
-    const request = typeof params === 'string'
-      ? { prompt: params, temperature, max_tokens: maxTokens }
-      : {
-          prompt: params.prompt,
-          title: params.title,
-          genres: params.genres,
-          synopsis: params.synopsis,
-          media_type: params.mediaType,
-          temperature: params.temperature ?? temperature,
-          max_tokens: params.maxTokens ?? maxTokens,
-        };
-    return tauriInvoke<{ generatedText: string; modelUsed: string; totalTokens: number }>('generate_ai_summary', {
-      request,
-    });
-  },
+  setActiveAiModel: (modelId: string) => tauriInvoke<boolean>('set_active_ai_model', { modelId }),
+  downloadAiModel: (modelId: string) => tauriInvoke<string>('download_ai_model', { modelId }),
+  generateAISummary: (params: InferenceParams) =>
+    // The whole object rides as the `request` argument (InferenceRequest struct).
+    tauriInvoke<InferenceResult>('generate_ai_summary', { request: params }),
 
-  // Relational Database Export / Import
+  // ── Database export / import ─────────────────────────────────────────────
   exportDatabaseJson: () => tauriInvoke<string>('export_database_json'),
-  importDatabaseJson: (jsonContent: string) => tauriInvoke<boolean>('import_database_json', { json_content: jsonContent }),
+  importDatabaseJson: (jsonContent: string) =>
+    tauriInvoke<boolean>('import_database_json', { jsonContent }),
 
-  // On-Demand In-App Update Checker with Built Asset Verification
+  /**
+   * On-demand update checker against GitHub Releases.
+   * Compares numeric semver cores only ("v0.4.0-beta" -> [0,4,0]); pre-release
+   * tags never crash the comparison. Prefers the newest release that ships a
+   * Windows .exe installer.
+   */
   checkForUpdates: async (): Promise<AppUpdateInfo> => {
     const currentVersion = versionData.version;
     try {
       const response = await fetch('https://api.github.com/repos/GhostBat101/CineVault/releases?per_page=15', {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-        },
+        headers: { Accept: 'application/vnd.github.v3+json' },
       });
       if (!response.ok) {
         throw new Error(`GitHub API returned HTTP ${response.status}`);
       }
-      const releases: any[] = await response.json();
+      const releases: Array<{
+        tag_name?: string;
+        name?: string | null;
+        body?: string | null;
+        published_at?: string | null;
+        html_url?: string;
+        assets?: Array<{ name?: string; size?: number; browser_download_url?: string }>;
+      }> = await response.json();
+
       if (!Array.isArray(releases) || releases.length === 0) {
         return {
           hasUpdate: false,
@@ -286,39 +152,27 @@ export const api = {
         };
       }
 
-      // Version comparison helper: returns true if candidateTag > currentVersion
-      const isNewer = (latest: string, current: string) => {
-        const p1 = latest.split('.').map(Number);
-        const p2 = current.split('.').map(Number);
-        for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
-          const num1 = p1[i] || 0;
-          const num2 = p2[i] || 0;
-          if (num1 > num2) return true;
-          if (num1 < num2) return false;
-        }
-        return false;
-      };
+      // Semver helpers (parseSemver/isNewer) live in utils/semver.ts and are
+      // unit-tested in tests/semver.test.ts.
 
-      // Find the most recent release that has a built installer executable (.exe)
-      const releaseWithInstaller = releases.find((rel) =>
-        (rel.assets || []).some((a: any) => a.name && a.name.toLowerCase().endsWith('.exe'))
+      // Newest first so "first release with an .exe" really is the newest build.
+      const sorted = [...releases].sort(
+        (a, b) => new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime()
       );
+      const candidate =
+        sorted.find((rel) => (rel.assets || []).some((a) => Boolean(a.name && a.name.toLowerCase().endsWith('.exe')))) ||
+        sorted[0];
 
-      // If no release has an .exe yet, inspect the latest release
-      const candidate = releaseWithInstaller || releases[0];
-      const candidateTag = (candidate.tag_name || '').replace(/^v/, '');
-      
-      const assets = (candidate.assets || []).map((a: any) => ({
-        name: a.name,
-        size: a.size,
-        browserDownloadUrl: a.browser_download_url,
+      const assets = (candidate.assets || []).map((a) => ({
+        name: a.name ?? '',
+        size: a.size ?? 0,
+        browserDownloadUrl: a.browser_download_url ?? '',
       }));
-
-      const hasExe = assets.some((a: { name?: string }) => Boolean(a.name && a.name.toLowerCase().endsWith('.exe')));
-      const hasUpdate = hasExe && isNewer(candidateTag, currentVersion);
+      const candidateTag = (candidate.tag_name || '').replace(/^v/, '');
+      const hasExe = assets.some((a) => a.name.toLowerCase().endsWith('.exe'));
 
       return {
-        hasUpdate,
+        hasUpdate: hasExe && isNewer(candidateTag, currentVersion),
         currentVersion,
         latestVersion: candidateTag || currentVersion,
         releaseTitle: candidate.name || candidate.tag_name || 'Latest Release',
@@ -327,20 +181,18 @@ export const api = {
         releaseUrl: candidate.html_url || 'https://github.com/GhostBat101/CineVault/releases',
         assets,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn('[Check For Updates Error]', err);
-      throw new Error(`Failed to check for updates: ${err?.message || err}`);
+      throw new Error(
+        `Failed to check for updates: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   },
 
   downloadAndInstallUpdate: (installerUrl: string, filename: string) =>
-    tauriInvoke<boolean>('download_and_install_update', {
-      installerUrl,
-      installer_url: installerUrl,
-      filename,
-    }),
+    tauriInvoke<boolean>('download_and_install_update', { installerUrl, filename }),
 
-  // Window Controls (Native Frameless Chrome)
+  // ── Window controls (native frameless chrome) ────────────────────────────
   minimizeWindow: () => tauriInvoke<void>('app_minimize'),
   maximizeWindow: () => tauriInvoke<void>('app_maximize'),
   closeWindow: () => tauriInvoke<void>('app_close'),

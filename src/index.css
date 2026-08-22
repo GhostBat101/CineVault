@@ -1,10 +1,122 @@
-/* CineVault Pure CSS Token Design System (Zero Runtime Overhead) */
+/*
+ * index.css
+ * ─────────────────────────────────────────────────────────────
+ * WHAT: Global stylesheet + design-token system. Defines the four luxury
+ *       dark themes as CSS custom properties scoped to body.theme-* classes,
+ *       layout metrics (titlebar/sidebar/HUD), glass panels, scrollbars,
+ *       shared keyframe animations, and responsive breakpoints.
+ *
+ * USES:    Nothing (loaded once by main.tsx).
+ * USED BY: Every component via var(--token) references; class hooks:
+ *          .glass-panel, .app-shell, .app-body, .main-content.
+ *
+ * KEY TOKENS:
+ *   --bg-primary/-secondary/-tertiary/-card - surface layers per theme.
+ *   --border-subtle/-medium/-active         - hairline border ladder.
+ *   --text-primary/-secondary/-muted        - text hierarchy.
+ *   --accent / --accent-subtle / --accent-glow - brand accent set.
+ *   --status-success/-warning/-danger       - semantic status colors
+ *     (--status-error aliases --status-danger for legacy call sites).
+ *
+ * CLASS HOOKS (beyond tokens):
+ *   .titlebar-chrome-btn / .titlebar-close-btn - window-control hover states.
+ */
+
+/* ── Self-hosted Fonts (offline / air-gapped) ────────────────────────────── */
+/* Replaces the Google Fonts CDN <link> removed from index.html. Latin
+   subsets live in src/assets/fonts/; Vite resolves the relative urls from
+   this file and emits hashed assets automatically. */
+
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/Geist-400-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/Geist-500-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/Geist-600-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/Geist-700-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/JetBrainsMono-400-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/JetBrainsMono-600-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── Accessibility & Interaction ─────────────────────────────────────────── */
+
+/* Keyboard focus ring for every interactive element. Components must NOT set
+   outline:none inline or this ring cannot reach them. */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Content surfaces stay selectable even though body sets user-select:none -
+   users must be able to copy synopses, lore notes, and AI output. */
+.main-content p,
+.main-content pre,
+.glass-panel p,
+.glass-panel li,
+.glass-panel blockquote {
+  user-select: text;
+}
+
+/* Window chrome hover states (replaces per-button JS mouse handlers). */
+.titlebar-chrome-btn:hover {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.titlebar-close-btn:hover {
+  background-color: var(--status-danger);
+  color: #ffffff;
+}
+
+/* ── Keyframe Animations ─────────────────────────────────────────────────── */
 
 :root {
   /* Common System Metrics */
   --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
-  
+
   --radius-xs: 4px;
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -20,6 +132,41 @@
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Spacing Scale (base 4px rhythm) ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* ── Type Scale ── */
+  --text-display: 28px;   /* dashboard hero only */
+  --text-h1: 20px;        /* view titles (was ad-hoc 18/22px) */
+  --text-h2: 16px;        /* section headers */
+  --text-h3: 14px;        /* card/panel titles */
+  --text-body: 13px;      /* workhorse body copy */
+  --text-caption: 12px;   /* secondary meta */
+  --text-micro: 11px;     /* badges/kickers (pair with .cv-kicker) */
+
+  /* ── Elevation Ladder ── */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 12px -2px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 12px 32px -8px rgba(0, 0, 0, 0.55);
+  --shadow-4: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  /* "Machined" top edge - makes surfaces read as lit rather than drawn. */
+  --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  /* Focus/active accent ring built on the existing glow token. */
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 24px -4px var(--accent-glow);
+
+  /* Entrance easing shared by all rise/scale motion. */
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Act-2 badge color (informational; constant across themes by design). */
+  --act-2: #38bdf8;
 }
 
 /* 1. Theme: Obsidian Dark (Monochromatic Deep Pure Black) */
@@ -27,6 +174,7 @@ body.theme-obsidian {
   --bg-primary: #050507;
   --bg-secondary: #0c0c10;
   --bg-tertiary: #141419;
+  --bg-raised: #1a1a21;
   --bg-card: rgba(18, 18, 23, 0.7);
   --bg-card-hover: rgba(28, 28, 35, 0.85);
   --bg-overlay: rgba(5, 5, 7, 0.82);
@@ -54,6 +202,7 @@ body.theme-crimson {
   --bg-primary: #080406;
   --bg-secondary: #12090d;
   --bg-tertiary: #1b0e14;
+  --bg-raised: #241319;
   --bg-card: rgba(24, 13, 18, 0.7);
   --bg-card-hover: rgba(36, 18, 26, 0.85);
   --bg-overlay: rgba(8, 4, 6, 0.85);
@@ -81,6 +230,7 @@ body.theme-midnight {
   --bg-primary: #060911;
   --bg-secondary: #0c1220;
   --bg-tertiary: #131b2e;
+  --bg-raised: #1a2440;
   --bg-card: rgba(16, 24, 42, 0.7);
   --bg-card-hover: rgba(24, 36, 62, 0.85);
   --bg-overlay: rgba(6, 9, 17, 0.85);
@@ -108,6 +258,7 @@ body.theme-emerald {
   --bg-primary: #040a07;
   --bg-secondary: #08140f;
   --bg-tertiary: #0e1f18;
+  --bg-raised: #14291f;
   --bg-card: rgba(12, 28, 21, 0.7);
   --bg-card-hover: rgba(18, 42, 32, 0.85);
   --bg-overlay: rgba(4, 10, 7, 0.85);
@@ -146,6 +297,77 @@ body {
   height: 100vh;
   width: 100vw;
   user-select: none;
+
+  /* Alias so legacy call sites using --status-error resolve correctly.
+     Declared on body (not :root) because theme colors live on body.theme-*. */
+  --status-error: var(--status-danger);
+
+  /* Theme-switch crossfade: token swap animates instead of hard-cutting. */
+  transition: background-color 250ms ease, color 250ms ease;
+}
+
+/* ── Keyframe Animations ─────────────────────────────────────────────────── */
+
+/* Spinner rotation (referenced by Button.tsx and AI-loading indicators). */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Skeleton shimmer sweep for loading placeholders. */
+@keyframes cinevault-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Modal panel entrance (used by common/Modal.tsx). */
+@keyframes modal-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* View/content entrance: gentle rise + fade (pair with .stagger-item). */
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Slow opacity breathing for indeterminate "AI thinking" states. */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Respect users who prefer reduced motion: disable all animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Typography Scale */
@@ -171,16 +393,21 @@ h1, h2, h3, h4, h5, h6 {
   background: var(--border-active);
 }
 
-/* Glassmorphism Backdrop Effects */
+/* Glassmorphism Backdrop Effects - now with default elevation + lit top edge.
+   Cards/promotable surfaces add .cv-lift to deepen shadow on hover. */
 .glass-panel {
   background: var(--bg-card);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2), var(--highlight-inset);
 }
 
-/* Application Layout Root */
+/* Application Layout Root - carries two large fixed accent washes so the
+   backdrop-filter of every glass panel has something real to blur. This is
+   the single biggest "premium dark app" atmosphere win (all four themes
+   inherit their own accent automatically). */
 .app-shell {
   display: flex;
   flex-direction: column;
@@ -188,6 +415,25 @@ h1, h2, h3, h4, h5, h6 {
   width: 100vw;
   background-color: var(--bg-primary);
   position: relative;
+}
+
+.app-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(1100px 700px at 88% -12%, var(--accent-glow), transparent 60%),
+    radial-gradient(900px 640px at -8% 108%, var(--accent-subtle), transparent 55%);
+  opacity: 0.5;
+}
+
+/* Keep interactive layers above the ambient wash. */
+.app-body,
+footer {
+  position: relative;
+  z-index: 1;
 }
 
 .app-body {
@@ -206,7 +452,137 @@ h1, h2, h3, h4, h5, h6 {
   position: relative;
 }
 
-/* Windows 11 Snap Layout & Responsive Breakpoints */
+/* ── Phase 3: Component Class Layer (cv-*) ─────────────────────────────────
+   Semantic building blocks consumed by TSX via className. Inline style objects
+   remain the norm for one-off layout; these classes own REUSABLE visual
+   behavior (hover/focus states, entrances, art direction) that plain inline
+   styles cannot express (:hover, :focus-visible, keyframes). */
+
+/* Kicker: uppercase wide-tracked micro label - the "film slate" signal.
+   Pair with fontSize var(--text-micro). */
+.cv-kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+/* Interactive card lift: replaces JS mouseenter/leave handlers and gives
+   keyboard parity for free. Apply to any clickable .glass-panel surface. */
+.cv-lift {
+  transition:
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+.cv-lift:hover {
+  transform: translateY(-4px);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-3), var(--highlight-inset);
+}
+.cv-lift:focus-visible {
+  transform: translateY(-4px);
+  border-color: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+
+/* Gradient accent border for featured/active surfaces (active model card,
+   AI panels, selected items) - softer than a blunt solid accent border. */
+.cv-border-glow {
+  border: 1px solid transparent !important;
+  background:
+    linear-gradient(var(--bg-secondary), var(--bg-secondary)) padding-box,
+    linear-gradient(135deg, var(--accent) 0%, transparent 70%) border-box;
+}
+
+/* Poster scrim: bottom gradient so overlaid pills/text always read. */
+.poster-scrim::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 55%, rgba(0, 0, 0, 0.65) 100%);
+}
+
+/* Wired poster zoom: the <img> inside a .cv-lift card scales on hover. */
+.cv-zoom-img {
+  transition: transform var(--transition-normal);
+}
+.cv-lift:hover .cv-zoom-img {
+  transform: scale(1.06);
+}
+
+/* Staggered entrance: apply .stagger-item to grid children and set
+   style={{ animationDelay: `${i * 30}ms` }} inline. */
+.stagger-item {
+  animation: fade-rise 300ms var(--ease-enter) backwards;
+}
+
+/* Skeleton block base - pair with the cinevault-shimmer keyframe. */
+.cv-skeleton {
+  background: linear-gradient(
+    100deg,
+    var(--bg-tertiary) 40%,
+    var(--bg-secondary) 50%,
+    var(--bg-tertiary) 60%
+  );
+  background-size: 200% 100%;
+  animation: cinevault-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* Indeterminate "AI thinking" pulse. */
+.cv-breathe {
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+/* Stat tile: dashboard hero metric cards. */
+.cv-stat-tile {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1), var(--highlight-inset);
+  padding: var(--space-4);
+}
+
+/* Sidebar active-item accent bar (applied via ::before on .is-active hosts). */
+.nav-active-bar {
+  position: relative;
+}
+.nav-active-bar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+/* BeatSheetView beat-row header - hover surface tint (class set by BeatCard). */
+.beat-header:hover {
+  background-color: var(--bg-card-hover);
+}
+
+/* LoreNotesView card edit/delete icon buttons (class set by LoreNotesView). */
+.lore-action-btn:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+/* Standard Button micro-interaction: brighten + lift on hover (all variants). */
+.cv-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+.cv-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* Windows 11 Snap Layout & Responsive Breakpoints.
+   NOTE: sidebar width is driven purely by React state (App.tsx force-collapses
+   below 640px) - the old CSS var override here caused visual/logical desync
+   with mid-glyph label clipping, so it was removed. */
 @media (max-width: 768px) {
   :root {
     --sidebar-width-expanded: 200px;
@@ -215,10 +591,9 @@ h1, h2, h3, h4, h5, h6 {
 
 @media (max-width: 640px) {
   :root {
-    --sidebar-width-expanded: 68px;
     --hud-height: 28px;
   }
-  
+
   .main-content {
     padding: 12px !important;
   }
