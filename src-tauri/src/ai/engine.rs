@@ -177,16 +177,20 @@ impl LocalAIEngine {
         let active_model_id = self.active_model_id.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
 
         // Catalog metadata for the ACTIVE model drives prompt format/context size.
-        let meta = get_supported_models()
+        // Underscore-prefixed: unused when the real-inference feature is off.
+        let _meta = get_supported_models()
             .into_iter()
             .find(|m| m.id == active_model_id);
 
         // ── 1. REAL PATH (feature-gated at compile time) ────────────────────
         #[cfg(feature = "real-inference")]
-        if let Some(meta) = &meta {
+        if let Some(meta) = &_meta {
             let model_path = self.get_vault_dir().join(&meta.filename);
             if model_path.exists() {
                 let prompt = build_chat_prompt(&req, &meta.prompt_format);
+                // Copy out BEFORE the 'static closure: `meta` is a borrow and
+                // cannot cross into spawn_blocking.
+                let context_len_u32 = meta.context_length as u32;
                 crate::logger::Logger::info(&format!(
                     "REAL inference via {} ({}, temp={:?}, max={:?}, gpu={:?})",
                     meta.id, meta.prompt_format, req.temperature, req.max_tokens, req.gpu_layers
@@ -198,7 +202,7 @@ impl LocalAIEngine {
                     crate::ai::llama_engine::generate_with_model(
                         &model_path,
                         &prompt,
-                        meta.context_length as u32,
+                        context_len_u32,
                         req.gpu_layers.unwrap_or(-1),
                         req.temperature.unwrap_or(0.7),
                         req.max_tokens.unwrap_or(512).min(2048),

@@ -181,7 +181,7 @@ impl ImdbScraper {
             format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}", wiki_title),
             format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_(film)", wiki_title),
             format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_({}_film)", wiki_title, year.unwrap_or(2024)),
-            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_\(TV_series)", wiki_title),
+            format!("https://en.wikipedia.org/api/rest_v1/page/summary/{}_(TV_series)", wiki_title),
         ];
 
         for url in candidates {

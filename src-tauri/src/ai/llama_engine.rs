@@ -165,7 +165,11 @@ pub fn generate_with_model(
         }
 
         let piece = model
-            .token_to_str(next_token, Special::Text)
+            // Plaintext = do NOT render special tokens into the output stream
+            // (variant set is {Tokenize, Plaintext} on llama-cpp-2 0.1.154;
+            // method itself is deprecated in favor of token_to_piece+Decoder,
+            // accepted here as a warning until that migration).
+            .token_to_str(next_token, Special::Plaintext)
             .map_err(|e| format!("Token decode failed: {}", e))?;
         generated_text.push_str(&piece);
         generated_count += 1;
