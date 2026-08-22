@@ -24,7 +24,10 @@ real-inference = ["dep:llama-cpp-2"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `protocol-asset` is REQUIRED: tauri.conf.json enables `assetProtocol`
+# (convertFileSrc for offline-cached posters). Mismatching these fails the
+# tauri-build script with "does not match the allowlist".
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-shell = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
