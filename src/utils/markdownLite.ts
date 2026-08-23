@@ -132,10 +132,12 @@ export function parseInline(text: string): MdInline[] {
     // --- *italic* (only when not part of **) ---------------------------------
     // A '*' immediately followed by another '*' belongs to a bold delimiter
     // (or an unclosed pair already handled above) - matching it here would
-    // emit a bogus empty italic token.
+    // emit a bogus empty italic token. The CLOSER is equally guarded: it must
+    // not be followed by another '*' (e.g. '*x**y*' - the first '*' would
+    // otherwise pair with the middle '**' opener and swallow real markup).
     if (char === '*' && text[i + 1] !== '*') {
       const close = text.indexOf('*', i + 1);
-      if (close !== -1 && text[close - 1] !== '*') {
+      if (close !== -1 && text[close - 1] !== '*' && text[close + 1] !== '*') {
         flushBuffer();
         out.push({ type: 'italic', text: text.slice(i + 1, close) });
         i = close + 1;

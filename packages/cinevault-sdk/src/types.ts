@@ -1,4 +1,4 @@
-export type BeatSheetFramework = 'save-the-cat' | 'three-act' | 'heros-journey' | 'dan-harmon-circle';
+export type BeatSheetFramework = 'save-the-cat' | 'three-act' | 'heros-journey' | 'dan-harmon';
 
 export interface BeatTemplate {
   name: string;

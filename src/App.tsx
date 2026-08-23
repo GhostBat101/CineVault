@@ -7,9 +7,9 @@
  *       global modals plus the telemetry HUD.
  *
  * VIEW SWITCHING: plain state (`activeTab`), no router. Views unmount when
- *       switched; DirectorSuite is additionally keyed by media id so switching
- *       the active title REMOUNTS its sub-views (prevents cross-title data
- *       bleed in TensionMatrixView / LoreNotesView / BeatSheetView).
+ *       switched; DirectorSuite sub-views key themselves by media id and
+ *       self-hydrate on storageKey change, so App must NOT force a remount
+ *       (a parent key here used to destroy in-progress sub-view state).
  *
  * USES:    hooks/useTheme.ts, hooks/useMediaLibrary.ts,
  *          components/layout/{Titlebar,Sidebar,Navbar}.tsx,
@@ -306,11 +306,10 @@ export function App() {
                 </div>
               )}
 
-              {/* Keyed by title id: switching titles remounts the whole suite so
-                  every sub-view reloads ITS OWN persisted state (no cross-title bleed). */}
+              {/* NOT keyed by title id: sub-views self-hydrate on storageKey
+                  change, so switching titles must not remount the suite. */}
               {activeTab === 'director' && (
                 <DirectorSuite
-                  key={selectedMedia?.id ?? 'no-title'}
                   media={selectedMedia}
                   mediaList={mediaList}
                   onSelectMedia={setSelectedMedia}

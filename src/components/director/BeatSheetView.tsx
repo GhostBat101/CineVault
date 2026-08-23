@@ -1,10 +1,11 @@
 ﻿/**
  * director/BeatSheetView.tsx
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
- * WHAT: Save the Cat! 15-beat engine. Editable per-beat scene workspaces,
- *       completion progress bar, act filters, runtime/page-budget input,
- *       JSON export, and the Local AI Structure Assistant whose output is
- *       rendered in a dedicated panel ("Insert into beat" applies it).
+ * ----------------------------------------------------------------------------
+ * WHAT: Multi-framework beat engine (Save the Cat! 15 beats / Classic
+ *       Three-Act). Editable per-beat scene workspaces, completion progress
+ *       bar, act filters, runtime/page-budget input, JSON export, and the
+ *       Local AI Structure Assistant whose output is rendered in a dedicated
+ *       panel ("Insert into beat" applies it).
  *
  * PERSISTENCE CONTRACT (load-before-save):
  *   The whole sheet ({beats, totalRuntimeMinutes}) lives under
@@ -22,7 +23,7 @@ import { Beat, Media } from '../../types';
 import { BeatCard } from './BeatCard';
 import { Button } from '../common/Button';
 import { Markdown } from '../common/Markdown';
-import { Sparkles, Download, Clock, FileText, Loader2 } from 'lucide-react';
+import { Sparkles, Download, Clock, FileText, Loader2, AlertTriangle } from 'lucide-react';
 import { useAISummary } from '../../hooks/useAISummary';
 
 interface BeatSheetViewProps {
@@ -43,10 +44,10 @@ const FRAMEWORKS: Array<{ id: Framework; label: string }> = [
 
 /** One canonical Save-the-Cat! beat template row. */
 const DEFAULT_SAVE_THE_CAT_BEATS: Array<Omit<Beat, 'content' | 'isCompleted'>> = [
-  { id: 'b1', name: 'Opening Image', act: 'Act 1', percentage: 1, order: 1, description: 'A snapshot of the protagonistâ€™s current flawed world before the adventure.' },
+  { id: 'b1', name: 'Opening Image', act: 'Act 1', percentage: 1, order: 1, description: 'A snapshot of the protagonist’s current flawed world before the adventure.' },
   { id: 'b2', name: 'Theme Stated', act: 'Act 1', percentage: 5, order: 2, description: 'What the story is truly about underneath the external plot.' },
-  { id: 'b3', name: 'Set-Up', act: 'Act 1', percentage: 10, order: 3, description: 'Expand on the protagonistâ€™s status quo, flaws, and stakes of inaction.' },
-  { id: 'b4', name: 'Catalyst (Inciting Incident)', act: 'Act 1', percentage: 12, order: 4, description: 'Life-changing disruption that shakes the protagonistâ€™s status quo.' },
+  { id: 'b3', name: 'Set-Up', act: 'Act 1', percentage: 10, order: 3, description: 'Expand on the protagonist’s status quo, flaws, and stakes of inaction.' },
+  { id: 'b4', name: 'Catalyst (Inciting Incident)', act: 'Act 1', percentage: 12, order: 4, description: 'Life-changing disruption that shakes the protagonist’s status quo.' },
   { id: 'b5', name: 'Debate', act: 'Act 1', percentage: 20, order: 5, description: 'The protagonist hesitates or questions whether to embark on the journey.' },
   { id: 'b6', name: 'Break into Two', act: 'Act 1', percentage: 25, order: 6, description: 'The protagonist crosses the threshold into the upside-down world of Act 2.' },
   { id: 'b7', name: 'B Story (Love / Mentor)', act: 'Act 2', percentage: 30, order: 7, description: 'Introduction of the secondary relationship carrying the thematic truth.' },
@@ -186,9 +187,11 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
   const handleGenerateAllBeatsAI = () => {
     const title = media?.title || 'Original Feature';
     const synopsis = media?.synopsis || 'An escalating narrative canvas.';
+    // Prompt names the ACTIVE framework - never a hardcoded Save-the-Cat ask.
+    const frameworkLabel = FRAMEWORKS.find((f) => f.id === framework)?.label ?? framework;
     clearError();
     setAiTarget({ kind: 'sheet', label: 'Full Sheet Structure Breakdown' });
-    generateSummary(`Generate a complete Save the Cat! 15 beat breakdown for "${title}". Synopsis: ${synopsis}`);
+    generateSummary(`Generate a complete ${frameworkLabel} beat breakdown for "${title}". Synopsis: ${synopsis}`);
   };
 
   /** Per-beat brainstorm; output lands in the same panel, tagged with the beat. */
@@ -495,8 +498,10 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
               Generating...
             </div>
           ) : aiError ? (
-            <div role="alert" style={{ fontSize: '12px', color: 'var(--status-danger)', lineHeight: 1.5 }}>
-              âš ï¸ {aiError}
+            <div role="alert" style={{ fontSize: '12px', color: 'var(--status-danger)', lineHeight: 1.5, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {/* Lucide icon instead of a text glyph (mojibake-proof). */}
+              <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+              <span>{aiError}</span>
             </div>
           ) : aiSummary ? (
             <>

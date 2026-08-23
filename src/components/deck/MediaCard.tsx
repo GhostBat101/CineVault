@@ -1,6 +1,6 @@
 ﻿/**
  * deck/MediaCard.tsx
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * ------------------------------------------------------------
  * WHAT: Single poster card in the dashboard grid. Shows poster (with offline
  *       fallback tile + bottom scrim), rating pill, watch-status pill (CLICK
  *       TO CYCLE), title/year/runtime meta, and a Director's Suite shortcut.
@@ -149,7 +149,7 @@ export const MediaCard = memo<MediaCardProps>(({
               color: 'var(--text-muted)',
             }}
           >
-            ðŸŽ¬
+            —
           </div>
         )}
 
@@ -296,7 +296,7 @@ export const MediaCard = memo<MediaCardProps>(({
             {media.year && <span>{media.year}</span>}
             {media.runtimeMinutes && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                <span>â€¢</span>
+                <span>🎬</span>
                 <Clock size={10} />
                 <span>{media.runtimeMinutes}m</span>
               </div>

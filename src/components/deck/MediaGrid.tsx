@@ -126,8 +126,18 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
             return (b.year || 0) - (a.year || 0);
           case 'title_asc':
             return a.title.localeCompare(b.title);
-          default:
-            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          default: {
+            // date_desc: invalid/absent createdAt must compare as 0 - NaN
+            // would break strict-weak-ordering and scramble the whole array.
+            // Equal timestamps tie-break alphabetically for a stable order.
+            const aTime = Number.isNaN(new Date(a.createdAt).getTime())
+              ? 0
+              : new Date(a.createdAt).getTime();
+            const bTime = Number.isNaN(new Date(b.createdAt).getTime())
+              ? 0
+              : new Date(b.createdAt).getTime();
+            return bTime - aTime || a.title.localeCompare(b.title);
+          }
         }
       });
   }, [mediaList, selectedStatus, selectedGenre, searchQuery, sortBy]);

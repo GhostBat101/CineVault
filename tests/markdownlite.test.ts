@@ -44,6 +44,17 @@ describe('parseInline', () => {
   it('handles empty input', () => {
     expect(parseInline('')).toEqual([]);
   });
+
+  it('round-trips "*x**y*" adjacency without a bogus italic token', () => {
+    // The '*' before '**' must NOT pair with the closer after 'y': with the
+    // trailing-boundary guard every delimiter stays literal text, the tokens
+    // join back to the exact source, and no empty/short bogus italic appears.
+    const source = 'a *x**y* b';
+    const tokens = parseInline(source);
+    expect(tokens.map((t) => t.text).join('')).toBe(source);
+    expect(tokens.some((t) => t.type === 'italic' && t.text.trim() === '')).toBe(false);
+    expect(tokens.every((t) => t.type === 'text')).toBe(true);
+  });
 });
 
 describe('parseMarkdown', () => {

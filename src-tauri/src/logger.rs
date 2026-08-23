@@ -17,6 +17,12 @@
 //!   because Windows renames fail onto existing files.
 //!   - Rotation check + write happen under a single lock acquisition, so two
 //!   threads can never race a rename against an open append handle.
+//!   - DEADLOCK RULE: `rotate_if_oversized` runs WHILE `Logger::log` holds
+//!   GLOBAL_LOGGER's non-reentrant mutex. It must therefore NEVER call back
+//!   into `Logger::{warn,error,...}` - those re-enter `log` and would block
+//!   forever on the same lock (observed on Windows when AV scanners hold the
+//!   log file during rotation). Failure branches inside rotation use
+//!   `eprintln!` instead; they bypass the mutex entirely and cannot deadlock.
 //!   - Timestamps use Howard Hinnant's civil-from-days conversion (leap-day
 //!   exact). The helper is duplicated from db::repository::iso_utc_now
 //!   instead of shared because this logger is a leaf module that must not
@@ -86,6 +92,11 @@ impl Logger {
 
     /// Shift the active log aside when it exceeds [`MAX_LOG_FILE_BYTES`].
     /// Best-effort: any filesystem error silently keeps appending to the old file.
+    ///
+    /// Called with GLOBAL_LOGGER already locked by `Logger::log`, so the
+    /// failure branches below MUST use `eprintln!` - routing through
+    /// `Logger::warn` would re-enter `log` and self-deadlock on the
+    /// non-reentrant mutex.
     fn rotate_if_oversized(&self) {
         let oversized = fs::metadata(&self.log_path)
             .map(|meta| meta.len() > MAX_LOG_FILE_BYTES)
@@ -99,13 +110,13 @@ impl Logger {
         // Single backup generation: remove stale backup so rename succeeds on Windows.
         if let Err(e) = fs::remove_file(&backup_path) {
             if e.kind() != std::io::ErrorKind::NotFound {
-                Logger::warn(&format!("Log rotation: could not clear backup {:?}: {}", backup_path, e));
+                eprintln!("[cinevault][warn] Log rotation: could not clear backup {:?}: {}", backup_path, e);
             }
         }
         // A locked file (external viewer / AV scanner) must not abort logging -
         // warn and keep appending to the oversized file until the next tick.
         if let Err(e) = fs::rename(&self.log_path, &backup_path) {
-            Logger::warn(&format!("Log rotation rename failed (file may be locked): {}", e));
+            eprintln!("[cinevault][warn] Log rotation rename failed (file may be locked): {}", e);
         }
     }
 

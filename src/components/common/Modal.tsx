@@ -4,8 +4,10 @@
  * WHAT:
  *   Accessible, glass-styled modal dialog for CineVault. Provides focus trapping,
  *   Escape-to-close (nested-modal aware: only the TOPMOST open modal closes),
- *   body scroll locking, focus restoration on close, and a subtle entrance
- *   animation. Purely inline-styled; depends on global CSS tokens defined in
+ *   body scroll locking with an open-stack refcount (the lock lifts only when
+ *   the LAST dialog closes, so nested out-of-order closes cannot wedge the
+ *   page), focus restoration on close, and a subtle entrance animation.
+ *   Purely inline-styled; depends on global CSS tokens defined in
  *   src/index.css (and the `modal-scale-in` keyframes added there).
  *
  * USES:
@@ -25,19 +27,20 @@
  *
  * KEY PROPS:
  *   - isOpen:              Whether the dialog is mounted/rendered (false renders null).
- *   - onClose:             Close callback invoked on Escape / backdrop click / âœ• button.
+ *   - onClose:             Close callback invoked on Escape / backdrop click / X button.
  *                          May change between renders safely (kept fresh via a ref).
  *   - title?:              Dialog heading; also wires aria-labelledby. Optional.
  *   - subtitle?:           Optional muted line under the title.
  *   - maxWidth?:           Panel max width (default '640px').
  *   - children:            Dialog body content (scrollable region).
- *   - closable?:           When false, hides the âœ• button AND disables Escape/backdrop
+ *   - closable?:           When false, hides the X button AND disables Escape/backdrop
  *                          close (default true). Body stays scroll-locked until unmount.
  *   - disableBackdropClose?: When true, clicking the dimmed overlay no longer closes
  *                          (protects half-filled forms like IngestModal). Default false.
  */
 
 import React, { useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 
 /* -------------------------------------------------------------------------- */
 /* Module-level modal stack (nested-modal awareness)                           */
@@ -153,8 +156,12 @@ closableRef.current = closable;
       const index = openModalStack.indexOf(requestClose);
       if (index !== -1) openModalStack.splice(index, 1);
 
-      // Restore prior page scroll behaviour.
-      document.body.style.overflow = previousOverflow;
+      // SCROLL-LOCK REFCOUNT: restore the prior page overflow ONLY when this
+      // was the last open modal. Nested dialogs closing out of order must not
+      // lift the lock while a parent dialog still needs it.
+      if (openModalStack.length === 0) {
+        document.body.style.overflow = previousOverflow;
+      }
 
       // Return focus to whatever held it before the dialog opened.
       if (previousActiveElement && previousActiveElement.isConnected) {
@@ -296,7 +303,6 @@ closableRef.current = closable;
                 border: 'none',
                 color: 'var(--text-muted)',
                 cursor: 'pointer',
-                fontSize: '16px',
                 minWidth: '32px',
                 minHeight: '32px',
                 padding: 0,
@@ -307,7 +313,8 @@ closableRef.current = closable;
                 flexShrink: 0,
               }}
             >
-              âœ•
+              {/* Lucide icon instead of a text glyph (mojibake-proof). */}
+              <X size={14} />
             </button>
           )}
         </div>

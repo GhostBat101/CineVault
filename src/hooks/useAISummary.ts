@@ -12,6 +12,8 @@
  *     immediately instead of leaking.
  *   - A monotonic `requestSeqRef` stamps every generation call; late results
  *     from superseded requests are discarded instead of overwriting newer ones.
+ *   - An `isGeneratingRef` window guards the ai:token listener: stream pieces
+ *     append only while a generation is actually in flight (ai:token guard).
  *   - Callbacks are read through a ref so callers can pass inline closures
  *     without invalidating `generateSummary` identity each render.
  *
@@ -52,6 +54,12 @@ export function useAISummary(options?: UseAISummaryOptions) {
   optionsRef.current = options;
   /** Monotonic counter used to discard stale generation results. */
   const requestSeqRef = useRef(0);
+  /**
+   * True while a generation is in flight. The ai:token listener drops events
+   * that arrive when nothing is generating (stray backend echoes would
+   * otherwise append garbage into the summary box).
+   */
+  const isGeneratingRef = useRef(false);
   /** Set true on unmount; guards state updates + cancels pending listeners. */
   const disposedRef = useRef(false);
   /**
@@ -105,6 +113,9 @@ export function useAISummary(options?: UseAISummaryOptions) {
             // append here - other hooks' generations must not interleave.
             listen<{ clientId?: string; piece?: string }>('ai:token', (event) => {
               if (disposed) return;
+              // Drop tokens outside an active generation window BEFORE the
+              // clientId filter - late/stray backend events must never append.
+              if (!isGeneratingRef.current) return;
               const payload = event.payload;
               if (!payload || typeof payload.piece !== 'string' || !payload.piece) return;
               if (payload.clientId !== clientIdRef.current) return;
@@ -144,6 +155,7 @@ export function useAISummary(options?: UseAISummaryOptions) {
       temperatureOverride?: number
     ) => {
       const seq = ++requestSeqRef.current;
+      isGeneratingRef.current = true;
       setIsGenerating(true);
       setError(null);
       setSummary('');
@@ -174,6 +186,8 @@ export function useAISummary(options?: UseAISummaryOptions) {
         setError(errMsg);
         optionsRef.current?.onError?.(new Error(errMsg));
       } finally {
+        // Close the token-acceptance window regardless of which path exits.
+        isGeneratingRef.current = false;
         if (seq === requestSeqRef.current && !disposedRef.current) {
           setIsGenerating(false);
           setDownloadProgress(null);

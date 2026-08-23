@@ -219,7 +219,8 @@ impl Repository {
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
-             PRAGMA foreign_keys = ON;"
+             PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 5000;"
         )?;
 
         Ok(Self {
@@ -352,20 +353,28 @@ impl Repository {
     /**
      * Upsert one media row. Rejects entries whose imdbId already belongs to a
      * DIFFERENT record (duplicate ingest); identical ids are plain updates.
+     *
+     * Storage normalization: the TRIMMED imdb id is bound into the SQL
+     * params (covering both the INSERT and the ON CONFLICT SET path via
+     * `excluded`), so padded ids never reach disk. `record.imdb_id` itself
+     * stays untouched.
      */
     pub fn insert_media(&self, record: &MediaRecord) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if let Some(imdb_id) = &record.imdb_id {
-            let imdb_trimmed = imdb_id.trim();
-            if !imdb_trimmed.is_empty() {
-                if let Some(existing_id) = self.find_media_id_by_imdb(&conn, imdb_trimmed)? {
-                    if existing_id != record.id {
-                        return Err(rusqlite::Error::InvalidParameterName(format!(
-                            "DUPLICATE_IMDB_ID: '{}' already exists in your vault as {}",
-                            imdb_trimmed, existing_id
-                        )));
-                    }
+        let clean_imdb: Option<String> = record
+            .imdb_id
+            .as_deref()
+            .map(str::trim)
+            .map(|trimmed| trimmed.to_string());
+
+        if let Some(imdb_trimmed) = clean_imdb.as_deref().filter(|id| !id.is_empty()) {
+            if let Some(existing_id) = self.find_media_id_by_imdb(&conn, imdb_trimmed)? {
+                if existing_id != record.id {
+                    return Err(rusqlite::Error::InvalidParameterName(format!(
+                        "DUPLICATE_IMDB_ID: '{}' already exists in your vault as {}",
+                        imdb_trimmed, existing_id
+                    )));
                 }
             }
         }
@@ -409,7 +418,7 @@ impl Repository {
             "#,
             params![
                 record.id,
-                record.imdb_id,
+                clean_imdb,
                 record.title,
                 record.original_title,
                 record.year,
@@ -513,9 +522,24 @@ impl Repository {
      * blob. The UI sends one key at a time (debounced sliders); replacing the
      * whole document would wipe sibling keys (e.g. saving `inferenceMode`
      * erasing `temperature`). Merge semantics keep every previously-saved key.
+     *
+     * REJECTION CONTRACT: a payload that is not valid JSON - or parses to any
+     * non-object Value (array / string / number / null) - is rejected with an
+     * error instead of silently replacing the stored settings.
      */
     pub fn save_app_settings_json(&self, json_data: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Reject invalid JSON up front; never fall back to Null (which used to
+        // overwrite good stored data with `null`).
+        let incoming: serde_json::Value = serde_json::from_str(json_data).map_err(|_| {
+            rusqlite::Error::InvalidParameterName("Settings payload must be a JSON object".into())
+        })?;
+        if !matches!(incoming, serde_json::Value::Object(_)) {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "Settings payload must be a JSON object".into(),
+            ));
+        }
 
         // Read-modify-write under the same lock acquisition.
         let existing: Option<String> = {
@@ -527,14 +551,12 @@ impl Repository {
             }
         };
 
-        let incoming: serde_json::Value = serde_json::from_str(json_data)
-            .unwrap_or(serde_json::Value::Null);
-
         let merged = match existing
             .as_deref()
             .map(|raw| serde_json::from_str::<serde_json::Value>(raw))
         {
             // Both sides objects -> shallow-merge keys, incoming wins.
+            // (`incoming` is guaranteed an object by the guard above.)
             Some(Ok(serde_json::Value::Object(old)))
                 if matches!(incoming, serde_json::Value::Object(_)) =>
             {
@@ -548,7 +570,7 @@ impl Repository {
                     unreachable!("guarded above")
                 }
             }
-            // No existing row / corrupt row / non-object payloads: replace.
+            // No existing row / corrupt existing row: replace outright.
             _ => incoming,
         };
 
@@ -569,8 +591,11 @@ impl Repository {
 
     /**
      * Export every table to a checksummed JSON document.
-     * Checksum contract: SHA-256 over the serialized document while
-     * `sha256Checksum` is the empty string - fully reproducible for verifiers.
+     * Checksum contract: SHA-256 over the PRETTY-serialized document
+     * (`serde_json::to_string_pretty`) while `sha256Checksum` is the empty
+     * string. The command layer saves exports via that same pretty
+     * serializer, so external verifiers hashing the SAVED FILE bytes
+     * reproduce the embedded checksum exactly.
      */
     pub fn export_full_database(&self) -> Result<FullDatabaseExport> {
         let media = self.get_all_media()?;
@@ -589,8 +614,9 @@ impl Repository {
             lore_notes: vec![],
         };
 
-        // Hash the canonical form (checksum field empty), then embed the hash.
-        let serialized = serde_json::to_string(&export_data).unwrap_or_default();
+        // Hash the canonical form (checksum field empty) serialized EXACTLY as
+        // the saved file will be - pretty-printed - then embed the hash.
+        let serialized = serde_json::to_string_pretty(&export_data).unwrap_or_default();
         let mut hasher = Sha256::new();
         hasher.update(serialized.as_bytes());
         export_data.sha256_checksum = format!("{:x}", hasher.finalize());
@@ -650,10 +676,17 @@ impl Repository {
                     serde_json::to_string(&record.genres).unwrap_or_else(|_| "[]".to_string());
                 let directors_json =
                     serde_json::to_string(&record.directors).unwrap_or_else(|_| "[]".to_string());
+                // Same storage normalization as insert_media: bind the
+                // TRIMMED imdb id so imports never persist padded values.
+                let clean_imdb: Option<String> = record
+                    .imdb_id
+                    .as_deref()
+                    .map(str::trim)
+                    .map(|trimmed| trimmed.to_string());
 
                 let result = stmt.execute(params![
                     record.id,
-                    record.imdb_id,
+                    clean_imdb,
                     record.title,
                     record.original_title,
                     record.year,
@@ -935,11 +968,12 @@ mod tests {
         let export = repo.export_full_database().unwrap();
         assert!(!export.sha256_checksum.is_empty(), "checksum must be embedded");
 
-        // Documented verifier contract: SHA-256 over the serialized document
-        // while `sha256Checksum` is the empty string.
+        // Documented verifier contract: SHA-256 over the PRETTY-serialized
+        // document (matching what export_database_json saves to disk) while
+        // `sha256Checksum` is the empty string.
         let mut replica = export.clone();
         replica.sha256_checksum = String::new();
-        let canonical = serde_json::to_string(&replica).unwrap();
+        let canonical = serde_json::to_string_pretty(&replica).unwrap();
         let mut hasher = Sha256::new();
         hasher.update(canonical.as_bytes());
         let recomputed = format!("{:x}", hasher.finalize());

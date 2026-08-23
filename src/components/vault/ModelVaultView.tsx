@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 import { Cpu, Download, CheckCircle, FolderOpen, HardDrive, ShieldCheck, AlertCircle } from 'lucide-react';
@@ -14,6 +14,15 @@ export const ModelVaultView: React.FC = () => {
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [downloadSpeed, setDownloadSpeed] = useState<string>('0.0');
+
+  /**
+   * Live mirror of `models` for the download-progress listener below (which
+   * mounts once and would otherwise read a stale empty array). Progress
+   * events report the FILENAME (payload.model_id); mapping filename -> model
+   * id through this ref lets tracking RESURRECT after a tab switch remount.
+   */
+  const modelsRef = useRef<ModelStatusItem[]>(models);
+  modelsRef.current = models;
 
   const fetchVaultStatus = async () => {
     try {
@@ -43,6 +52,19 @@ export const ModelVaultView: React.FC = () => {
             const pct = Math.min(100, Math.max(0, Math.round(payload.percentage ?? payload.percent ?? 0)));
             const speedVal = payload.speedMbps ?? payload.speed_mbps ?? 0;
             const isDone = payload.isCompleted ?? payload.is_completed ?? (pct >= 100);
+
+            // RESURRECTION: the event's model_id is a FILENAME. Map it back to
+            // the catalog id so a remounted view re-attaches its progress UI
+            // to an in-flight backend download.
+            const rawFilename: string | undefined = payload.model_id ?? payload.modelId;
+            if (!isDone && typeof rawFilename === 'string') {
+              const match = modelsRef.current.find(
+                (m) => m.filename === rawFilename || m.localPath?.endsWith(rawFilename)
+              );
+              if (match) {
+                setDownloadingModelId((current) => (current === match.id ? current : match.id));
+              }
+            }
 
             setDownloadProgress(pct);
             setDownloadSpeed(Number(speedVal).toFixed(1));
@@ -84,14 +106,30 @@ export const ModelVaultView: React.FC = () => {
     setDownloadProgress(0);
     setDownloadSpeed('0.0');
 
+    // Set when the backend reports this file is ALREADY downloading: the UI
+    // must attach to the live stream, so the finally-block reset is skipped.
+    let duplicateDownload = false;
+
     try {
       await api.downloadAiModel(modelId);
       await fetchVaultStatus();
     } catch (err: any) {
-      console.error('[Model Download Error]', err);
-      toast.error(`Model download error: ${err?.message || err}`, 'Download failed');
+      const message = err instanceof Error ? err.message : String(err ?? '');
+      if (message.startsWith('DOWNLOAD_IN_PROGRESS:')) {
+        // A backend download is already streaming for this file - treat as
+        // informational and keep the progress bar attached to live events.
+        console.warn('[Model Download]', message);
+        toast.info('Already downloading in background');
+        setDownloadingModelId(modelId);
+        duplicateDownload = true;
+      } else {
+        console.error('[Model Download Error]', err);
+        toast.error(`Model download error: ${message}`, 'Download failed');
+      }
     } finally {
-      setDownloadingModelId(null);
+      if (!duplicateDownload) {
+        setDownloadingModelId(null);
+      }
     }
   };
 
@@ -318,9 +356,9 @@ export const ModelVaultView: React.FC = () => {
                       </h4>
                       <div style={{ display: 'flex', gap: '6px', fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                         <span>{model.parameterSize}</span>
-                        <span>â€¢</span>
+                        <span>•</span>
                         <span>{model.quantization}</span>
-                        <span>â€¢</span>
+                        <span>•</span>
                         <span>{model.fileSizeMb} MB</span>
                       </div>
                     </div>

@@ -1,7 +1,7 @@
 ﻿/**
  * director/TensionMatrixView.tsx
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
- * WHAT: Character Relationship Tension Matrix - an NÃ—N clickable grid where
+ * ------------------------------------------------------------
+ * WHAT: Character Relationship Tension Matrix - an N------------------------------------------------------------N clickable grid where
  *       each cell opens a modal to set a 1-10 tension score, a relationship
  *       label, and subtext notes between two characters. Cast is managed via
  *       the "Add Character" modal.
@@ -341,7 +341,7 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
             No Characters Added Yet
           </h3>
           <p style={{ fontSize: '13px', color: 'var(--text-secondary)', maxWidth: '400px', margin: '0 auto 16px auto' }}>
-            Add the protagonist, antagonist, and supporting cast to generate the dynamic N Ã— N friction heatmap.
+            Add the protagonist, antagonist, and supporting cast to generate the dynamic N — N friction heatmap.
           </p>
           <Button variant="primary" size="sm" icon={<UserPlus size={14} />} onClick={openAddCharacterModal}>
             Add First Character
@@ -448,7 +448,7 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
                             fontSize: '12px',
                           }}
                         >
-                          â€”
+                          —
                         </td>
                       );
                     }
@@ -528,7 +528,7 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
       <Modal
         isOpen={Boolean(editingLink)}
         onClose={() => setEditingLink(null)}
-        title={editingLink ? `Tension: ${editingLink.c1.name} â†” ${editingLink.c2.name}` : ''}
+        title={editingLink ? `Tension: ${editingLink.c1.name} — ${editingLink.c2.name}` : ''}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <div>

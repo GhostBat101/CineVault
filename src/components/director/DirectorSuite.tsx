@@ -1,6 +1,6 @@
 ﻿/**
  * director/DirectorSuite.tsx
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * ------------------------------------------------------------
  * WHAT: Shell for the Director's Suite mode: sub-tab navigation between the
  *       Beat Sheet engine, Character Tension Matrix, and Lore Notes views,
  *       plus the "Active Title" dropdown for switching the directing target.

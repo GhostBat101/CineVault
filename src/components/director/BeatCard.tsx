@@ -1,9 +1,11 @@
 /**
  * director/BeatCard.tsx
  * ─────────────────────────────────────────────────────────────
- * WHAT: One collapsible Save-the-Cat! beat row: numbered completion square,
- *       act badge, name, timestamp estimate, and an expanded scene workspace
- *       (textarea + per-beat "AI Beat Brainstorm" trigger).
+ * WHAT: One collapsible Save-the-Cat! beat row: a plain header flex row with
+ *       TWO sibling controls - the numbered completion toggle button and a
+ *       real expand/collapse button (.beat-header) wrapping the act badge,
+ *       name, description, timestamp estimate, and chevron - plus an expanded
+ *       scene workspace (textarea + per-beat "AI Beat Brainstorm" trigger).
  *
  * COMPLETION RULES:
  *   - The numbered square is an explicit TOGGLE (manual control).
@@ -19,7 +21,7 @@
  * USES:    types/index.ts (Beat); design tokens --act-2, --shadow-1,
  *          --status-success glow (Phase 3 uplift).
  * USED BY: director/BeatSheetView.tsx (memoized; callbacks arrive stable).
- * NOTE:    Hover feedback for the header row lives in index.css
+ * NOTE:    Hover feedback for the expand button lives in index.css
  *          (.beat-header:hover) - no JS hover handlers here by policy.
  */
 import { useState, useRef, useEffect, memo } from 'react';
@@ -120,74 +122,77 @@ export const BeatCard = memo<BeatCardProps>(({
         transition: 'all var(--transition-fast)',
       }}
     >
-      {/* Beat Header Bar - a div carrying button SEMANTICS (role/tabIndex/
-          keydown) so the completion toggle inside can remain a REAL button.
-          Nested <button> inside <button> is invalid HTML; this pattern keeps
-          both controls individually reachable in the accessibility tree. */}
+      {/* Beat Header Bar - a plain flex row holding TWO sibling controls so
+          nested interactive elements never appear inside a <button>:
+            1. the numbered completion toggle button, and
+            2. the expand/collapse control - a REAL button carrying the
+               .beat-header class (hover styling) that wraps the badge/name/
+               description/timestamp/chevron content. */}
       <div
-        role="button"
-        tabIndex={0}
-        className="beat-header"
-        onClick={() => setIsExpanded(!isExpanded)}
-        onKeyDown={(e) => {
-          if (e.target !== e.currentTarget) return;
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setIsExpanded(!isExpanded);
-          }
-        }}
-        aria-expanded={isExpanded}
-        aria-label={`${beat.name} (${beat.act}). ${isExpanded ? 'Collapse' : 'Expand'} scene editor.`}
         style={{
           padding: '12px 16px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          cursor: 'pointer',
-          userSelect: 'none',
+          gap: '12px',
           width: '100%',
-          background: 'transparent',
-          border: 'none',
-          textAlign: 'left',
-          color: 'inherit',
-          font: 'inherit',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-          {/* Order / Completion Toggle - explicit manual control */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (onToggleCompleted) onToggleCompleted(beat);
-            }}
-            aria-label={
-              beat.isCompleted
-                ? `Mark "${beat.name}" as incomplete`
-                : `Mark "${beat.name}" as complete`
-            }
-            title={beat.isCompleted ? 'Mark incomplete' : 'Mark complete'}
-            style={{
-              width: '24px',
-              height: '24px',
-              borderRadius: 'var(--radius-xs)',
-              flexShrink: 0,
-              backgroundColor: beat.isCompleted ? 'var(--status-success)' : 'var(--bg-primary)',
-              color: beat.isCompleted ? '#ffffff' : 'var(--text-muted)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '11px',
-              fontWeight: 700,
-              border: '1px solid var(--border-medium)',
-              boxShadow: beat.isCompleted ? '0 0 12px -2px var(--status-success)' : 'var(--shadow-1)',
-              cursor: 'pointer',
-            }}
-          >
-            {beat.isCompleted ? <CheckCircle size={14} /> : beat.order}
-          </button>
+        {/* Sibling control 1: Order / Completion Toggle */}
+        <button
+          type="button"
+          onClick={() => {
+            if (onToggleCompleted) onToggleCompleted(beat);
+          }}
+          aria-label={
+            beat.isCompleted
+              ? `Mark "${beat.name}" as incomplete`
+              : `Mark "${beat.name}" as complete`
+          }
+          title={beat.isCompleted ? 'Mark incomplete' : 'Mark complete'}
+          style={{
+            width: '24px',
+            height: '24px',
+            borderRadius: 'var(--radius-xs)',
+            flexShrink: 0,
+            backgroundColor: beat.isCompleted ? 'var(--status-success)' : 'var(--bg-primary)',
+            color: beat.isCompleted ? '#ffffff' : 'var(--text-muted)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '11px',
+            fontWeight: 700,
+            border: '1px solid var(--border-medium)',
+            boxShadow: beat.isCompleted ? '0 0 12px -2px var(--status-success)' : 'var(--shadow-1)',
+            cursor: 'pointer',
+          }}
+        >
+          {beat.isCompleted ? <CheckCircle size={14} /> : beat.order}
+        </button>
 
-          {/* Act Badge & Name */}
+        {/* Sibling control 2: expand/collapse button wrapping all card info */}
+        <button
+          type="button"
+          className="beat-header"
+          onClick={() => setIsExpanded(!isExpanded)}
+          aria-expanded={isExpanded}
+          aria-label={`${beat.name} (${beat.act}). ${isExpanded ? 'Collapse' : 'Expand'} scene editor.`}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            cursor: 'pointer',
+            userSelect: 'none',
+            background: 'transparent',
+            border: 'none',
+            textAlign: 'left',
+            color: 'inherit',
+            font: 'inherit',
+          }}
+        >
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span
@@ -202,7 +207,7 @@ export const BeatCard = memo<BeatCardProps>(({
               >
                 {beat.act}
               </span>
-              <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+              <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
                 {beat.name}
               </h4>
             </div>
@@ -210,31 +215,31 @@ export const BeatCard = memo<BeatCardProps>(({
               {beat.description}
             </p>
           </div>
-        </div>
 
-        {/* Timestamp & Chevron */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-              fontFamily: 'var(--font-mono)',
-              color: 'var(--text-muted)',
-              backgroundColor: 'var(--bg-primary)',
-              padding: '3px 8px',
-              borderRadius: 'var(--radius-xs)',
-            }}
-          >
-            <Clock size={11} />
-            <span>~{calculatedMinute} min ({beat.percentage}%)</span>
+          {/* Timestamp & Chevron */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '11px',
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--text-muted)',
+                backgroundColor: 'var(--bg-primary)',
+                padding: '3px 8px',
+                borderRadius: 'var(--radius-xs)',
+              }}
+            >
+              <Clock size={11} />
+              <span>~{calculatedMinute} min ({beat.percentage}%)</span>
+            </div>
+
+            <span style={{ color: 'var(--text-muted)', display: 'inline-flex' }}>
+              {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </span>
           </div>
-
-          <span style={{ color: 'var(--text-muted)', display: 'inline-flex' }}>
-            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </span>
-        </div>
+        </button>
       </div>
 
       {/* Expanded Scene Workspace */}

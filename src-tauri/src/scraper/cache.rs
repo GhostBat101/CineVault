@@ -1,3 +1,19 @@
+//! scraper/cache.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//! WHAT: Content-addressed asset cache. [`AssetCacheManager::cache_image_from_url`]
+//!   downloads a remote image once, names it by the SHA-256 of its URL, and
+//!   returns the local path on every subsequent call (dedupe for free).
+//!
+//! DESIGN NOTES:
+//!   - HTTP responses are validated (`is_success`) BEFORE any bytes are read
+//!   or written - an error page must never land in the cache as a corrupt
+//!   "poster" that then short-circuits future downloads via the existence
+//!   fast path.
+//!
+//! USES:    reqwest, sha2, tokio/fs.
+//! USED BY: scraper/mod.rs re-export; available to command layer for bulk
+//!   poster pre-caching.
+
 use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use tokio::fs::{self, File};
@@ -45,6 +61,15 @@ impl AssetCacheManager {
             .send()
             .await
             .map_err(|e| format!("Image download network error: {}", e))?;
+
+        // Reject non-success statuses BEFORE touching disk: caching an error
+        // page would poison the URL-keyed existence fast path forever.
+        if !response.status().is_success() {
+            return Err(format!(
+                "Image download failed with HTTP status: {}",
+                response.status()
+            ));
+        }
 
         let bytes = response
             .bytes()

@@ -21,9 +21,13 @@
  *          components/settings/SettingsView.tsx.
  *
  * KEY EXPORTS:
- *   isTauri()      - true when running inside the Tauri webview (guards
- *                    event-listener setup; browser dev mode has no IPC).
- *   api            - typed facade over every Tauri command + update checker.
+ *   isTauri()           - true when running inside the Tauri webview (guards
+ *                         event-listener setup; browser dev mode has no IPC).
+ *   api                 - typed facade over every Tauri command + update checker.
+ *   exportVaultBundle() - downloads a bundle file wrapping the SQLite dump AND
+ *                         all Director Suite localStorage data.
+ *   importVaultBundle() - restores a bundle (or legacy plain dump); returns how
+ *                         many Director Suite keys were restored.
  */
 
 import {
@@ -116,6 +120,14 @@ export const api = {
     tauriInvoke<boolean>('import_database_json', { jsonContent }),
 
   /**
+   * Cache a user-picked local image into the backend poster scope
+   * ($CACHE/posters) and return the cached absolute path. The returned path is
+   * safe to feed through getPosterSrc()/convertFileSrc for offline previews.
+   */
+  importPosterAsset: (sourcePath: string) =>
+    tauriInvoke<string>('import_poster_asset', { sourcePath }),
+
+  /**
    * On-demand update checker against GitHub Releases.
    * Compares numeric semver cores only ("v0.4.0-beta" -> [0,4,0]); pre-release
    * tags never crash the comparison. Prefers the newest release that ships a
@@ -197,3 +209,109 @@ export const api = {
   maximizeWindow: () => tauriInvoke<void>('app_maximize'),
   closeWindow: () => tauriInvoke<void>('app_close'),
 };
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Vault bundle export / import (media database + Director Suite data)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The SQLite dump alone misses everything stored in localStorage by the
+ * Director Suite (characters, relationships, lore notes, beat sheets), so a
+ * "vault bundle" wraps BOTH stores in one portable envelope:
+ *
+ *   { format: 'cinevault-vault-bundle', version: 1,
+ *     vault: <parsed export_database_json payload>,
+ *     suite: { [localStorageKey]: rawValue } }
+ */
+
+/** localStorage keys that hold Director Suite data (per-title `_global`). */
+const SUITE_KEY_PREFIX = /^cinevault_(characters|relationships|lore_notes|beats)_/;
+
+/** Portable envelope written by exportVaultBundle / read by importVaultBundle. */
+interface VaultBundle {
+  format: 'cinevault-vault-bundle';
+  version: 1;
+  /** Parsed payload of a backend `export_database_json` call. */
+  vault: unknown;
+  /** Director Suite entries keyed by their localStorage key. */
+  suite: Record<string, unknown>;
+}
+
+/** Trigger a JSON file download; the blob URL is revoked right after the click. */
+function downloadJsonFile(content: string, filename: string): void {
+  const blob = new Blob([content], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Export the full vault as a bundle file: the backend database dump plus every
+ * Director Suite localStorage key matching SUITE_KEY_PREFIX. Suite values are
+ * kept parsed when valid JSON, otherwise as the raw stored string.
+ * Resolves once the download has been triggered; rejects on IPC/parse failure.
+ */
+export async function exportVaultBundle(): Promise<void> {
+  // Pass-through contract: backend checksums PRETTY serialization now, so the
+  // vault JSON is embedded untouched.
+  const vaultJson = await api.exportDatabaseJson();
+  const vault: unknown = JSON.parse(vaultJson);
+
+  const suite: Record<string, unknown> = {};
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (!key || !SUITE_KEY_PREFIX.test(key)) continue;
+    const raw = localStorage.getItem(key);
+    if (raw === null) continue;
+    try {
+      suite[key] = JSON.parse(raw);
+    } catch {
+      suite[key] = raw;
+    }
+  }
+
+  const bundle: VaultBundle = {
+    format: 'cinevault-vault-bundle',
+    version: 1,
+    vault,
+    suite,
+  };
+  const stamp = new Date().toISOString().slice(0, 10); // yyyy-mm-dd
+  downloadJsonFile(JSON.stringify(bundle, null, 2), `cinevault_bundle_${stamp}.json`);
+}
+
+/**
+ * Restore a previously exported bundle (or a legacy plain database export).
+ * Bundle format: every suite key is written back into localStorage FIRST so
+ * the post-import reload hydrates them, THEN the media database is imported.
+ * Legacy plain exports are handed straight to import_database_json.
+ * @returns How many Director Suite keys were restored (0 for legacy files).
+ */
+export async function importVaultBundle(text: string): Promise<{ suiteKeys: number }> {
+  let parsed: Partial<VaultBundle> & { format?: string };
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Invalid file: content is not valid JSON.');
+  }
+
+  if (parsed && parsed.format === 'cinevault-vault-bundle') {
+    const suite = parsed.suite ?? {};
+    let suiteKeys = 0;
+    for (const [key, value] of Object.entries(suite)) {
+      if (!SUITE_KEY_PREFIX.test(key)) continue;
+      localStorage.setItem(
+        key,
+        typeof value === 'string' ? value : JSON.stringify(value)
+      );
+      suiteKeys += 1;
+    }
+    await api.importDatabaseJson(JSON.stringify(parsed.vault));
+    return { suiteKeys };
+  }
+
+  // Legacy plain exports carry only the database dump.
+  await api.importDatabaseJson(text);
+  return { suiteKeys: 0 };
+}

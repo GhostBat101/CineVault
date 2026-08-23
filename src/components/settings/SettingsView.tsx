@@ -1,10 +1,10 @@
 ﻿/**
  * settings/SettingsView.tsx
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * ----------------------------------------------------------------------------
  * WHAT: Settings suite: theme picker, Local AI inference preferences
- *       (temperature / GPU offload - persisted to SQLite), data export &
- *       import, developer links, and the GitHub-release updater UI with live
- *       install progress.
+ *       (temperature / GPU offload - persisted to SQLite), vault bundle export
+ *       & import (database + Director Suite localStorage data), developer
+ *       links, and the GitHub-release updater UI with live install progress.
  *
  * PERSISTENCE: AI settings load once from `get_app_settings` and every change
  *       is debounce-saved through `save_app_settings`. Tabs whose features are
@@ -18,7 +18,6 @@
 import React, { useState } from 'react';
 import { ThemeName, AppSettings } from '../../types';
 import { Button } from '../common/Button';
-import { api } from '../../services/api';
 import {
   Palette,
   Cpu,
@@ -32,10 +31,15 @@ import {
   RefreshCw,
   ExternalLink,
 } from 'lucide-react';
+import {
+  api,
+  isTauri,
+  exportVaultBundle,
+  importVaultBundle,
+} from '../../services/api';
 
 import { AppUpdateInfo } from '../../types';
 import versionData from '../../../version.json';
-import { isTauri } from '../../services/api';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { toast } from '../common/Toast';
 
@@ -226,17 +230,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTimeout(() => setStatusMessage(null), 3000);
   };
 
+  /**
+   * Export a full vault bundle (SQLite database + Director Suite localStorage
+   * data) as one downloadable JSON envelope.
+   */
   const handleExportDatabase = async () => {
     try {
-      const jsonContent = await api.exportDatabaseJson();
-      const blob = new Blob([jsonContent], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `cinevault_backup_${Date.now()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      showStatus('Database exported to JSON with integrity checksum.');
+      await exportVaultBundle();
+      showStatus('Vault bundle exported (database + Director Suite data).');
     } catch (err) {
       // Non-blocking toast instead of alert(): export failures surface
       // without freezing the UI thread.
@@ -255,10 +256,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (!file) return;
       try {
         // File read INSIDE the guard - permission/IO failures must surface
-        // as a toast, not an unhandled rejection.
+        // as a toast, not an unhandled rejection. Bundle files restore their
+        // Director Suite localStorage keys before the database import.
         const text = await file.text();
-        await api.importDatabaseJson(text);
-        showStatus('Database restored successfully! Reloading...');
+        const { suiteKeys } = await importVaultBundle(text);
+        showStatus(
+          suiteKeys > 0
+            ? `Vault restored (${suiteKeys} Director Suite key${suiteKeys === 1 ? '' : 's'} included). Reloading...`
+            : 'Database restored successfully! Reloading...'
+        );
         setTimeout(() => window.location.reload(), 1000);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err), 'Import failed');
@@ -429,7 +435,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: th.accent }} />
                   </div>
                   <div style={{ fontSize: '11px', color: '#9ca3af' }}>
-                    {currentTheme === th.id ? 'âœ“ Currently Active' : 'Click to activate'}
+                    {currentTheme === th.id ? '✓ Currently Active' : 'Click to activate'}
                   </div>
                 </div>
               ))}
@@ -539,7 +545,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div>
                   <h4 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Import & Restore</h4>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Restore an existing backup JSON file. All records will be validated against schema checksums.
+                    Restore a vault bundle or a legacy plain backup JSON. Bundle files also reinstate Director Suite characters, beats, and lore notes.
                   </p>
                 </div>
                 <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={handleImportDatabase}>

@@ -10,6 +10,9 @@
 //!   - The final model filename appears on disk only via atomic rename of the
 //!   fully-verified .part file; interrupted attempts never leave a file that
 //!   could later pass an existence check.
+//!   - Concurrency: a module-level `IN_FLIGHT` registry (keyed by filename)
+//!   rejects a second download of the same model while one is running; the
+//!   caller sees `DOWNLOAD_IN_PROGRESS: <file>` instead of racing byte writes.
 //!
 //! USES:    reqwest (stream), sha2, tokio/fs, logger.
 //! USED BY: src-tauri/src/commands/mod.rs (download_ai_model,
@@ -18,9 +21,18 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::collections::HashSet;
+use std::sync::Mutex;
 use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
 use crate::logger::Logger;
+
+/// Filenames with a download currently running. Poison-tolerant lock:
+/// a panicking callback must never wedge every future download.
+/// Registration/unregistration happens ONLY in the thin
+/// [`ModelDownloader::download_gguf_model`] wrapper, so every exit path of
+/// [`ModelDownloader::download_gguf_model_inner`] is covered by construction.
+static IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
 
 /// Progress payload emitted through the `model_download_progress` event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +56,13 @@ pub struct ModelDownloader;
 
 impl ModelDownloader {
     /// Cheap connectivity probe used before any download starts.
+    ///
+    /// Three probes in escalation order: huggingface.co -> cloudflare
+    /// 1.1.1.1 -> google generate_204. A NEGATIVE answer never short-
+    /// circuits: HF 403s HEAD requests from bots, so a responding-but-
+    /// hostile edge must fall through to the next probe. Success criteria:
+    /// `is_success() || is_redirection()` for the first two (1.1.1.1
+    /// answers HEAD with a 301 redirect), exactly HTTP 204 for generate_204.
     pub async fn is_internet_connected() -> bool {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
@@ -51,11 +70,25 @@ impl ModelDownloader {
             .build();
 
         if let Ok(client) = client {
+            // Probe 1: huggingface.co (the actual download host).
             if let Ok(resp) = client.head("https://huggingface.co").send().await {
-                return resp.status().is_success() || resp.status().is_redirection();
+                if resp.status().is_success() || resp.status().is_redirection() {
+                    return true;
+                }
             }
+            // Probe 2: cloudflare 1.1.1.1 - answers HEAD with a 301 redirect,
+            // which still proves DNS + TCP + TLS all work.
             if let Ok(resp) = client.head("https://1.1.1.1").send().await {
-                return resp.status().is_success();
+                if resp.status().is_success() || resp.status().is_redirection() {
+                    return true;
+                }
+            }
+            // Probe 3: google generate_204 - connectivity checker that
+            // responds with exactly 204 No Content when reachable.
+            if let Ok(resp) = client.head("https://www.google.com/generate_204").send().await {
+                if resp.status().as_u16() == 204 {
+                    return true;
+                }
             }
         }
         false
@@ -63,7 +96,56 @@ impl ModelDownloader {
 
     /// Download `filename` from `download_url` into `dest_dir`, verifying it
     /// against `expected_sha256`. Returns the final verified path.
+    ///
+    /// Thin concurrency guard around
+    /// [`ModelDownloader::download_gguf_model_inner`]: registers `filename`
+    /// in [`IN_FLIGHT`] BEFORE any work starts, then unconditionally removes
+    /// it once the inner future resolves - success, every Err branch, and
+    /// retry exhaustion are all covered because removal happens at this
+    /// single point after `.await`. A concurrent duplicate call is rejected
+    /// up front with `DOWNLOAD_IN_PROGRESS`.
     pub async fn download_gguf_model<F>(
+        download_url: &str,
+        dest_dir: &Path,
+        filename: &str,
+        expected_sha256: &str,
+        progress_callback: F,
+    ) -> Result<PathBuf, String>
+    where
+        F: Fn(DownloadProgress) + Send + Sync + 'static,
+    {
+        {
+            let mut in_flight = IN_FLIGHT
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !in_flight.insert(filename.to_string()) {
+                return Err(format!("DOWNLOAD_IN_PROGRESS: {filename}"));
+            }
+        } // Registry lock dropped before the long transfer; re-taken only to unregister.
+
+        let outcome = Self::download_gguf_model_inner(
+            download_url,
+            dest_dir,
+            filename,
+            expected_sha256,
+            progress_callback,
+        )
+        .await;
+
+        // Single exit funnel: whatever inner returned, this filename is no
+        // longer downloading.
+        let mut in_flight = IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        in_flight.remove(filename);
+        outcome
+    }
+
+    /// The full download pipeline previously living in
+    /// [`ModelDownloader::download_gguf_model`]: connectivity check,
+    /// already-verified fast path, resilient retry loop with streamed
+    /// SHA-256 hashing, and atomic promote of the verified `.part` file.
+    async fn download_gguf_model_inner<F>(
         download_url: &str,
         dest_dir: &Path,
         filename: &str,

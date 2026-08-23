@@ -8,7 +8,9 @@
  *     1. A module-level pub/sub event store (`subscribe` / `emit`) plus an
  *        imperative singleton `toast` that any code can call from anywhere -
  *        event handlers, catch blocks, plain functions - without props,
- *        context, or hooks.
+ *        context, or hooks. The listener set lives on globalThis under
+ *        Symbol.for('cinevault.toast-bus') so Vite HMR module re-runs reuse
+ *        the live bus instead of orphaning the mounted viewport.
  *
  *     2. `<ToastViewport />`, the sole renderer: it subscribes to the store on
  *        mount, buffers up to 4 visible toasts (oldest dropped), and portals
@@ -87,23 +89,41 @@ const VIEWPORT_HOST_ID = 'cv-toast-viewport-host';
 
 /* ────────────────────────── Module-level pub/sub store ─────────────────── */
 
-/** Live listener set backing the tiny event store (no external state lib). */
-const listeners = new Set<ToastListener>();
+/**
+ * Shape of the singleton bus state stored on globalThis under a well-known
+ * symbol (see TOAST_BUS_KEY).
+ */
+interface ToastBusStore {
+  /** Live listener set backing the tiny event store (no external state lib). */
+  listeners: Set<ToastListener>;
+}
+
+/** globalThis slot for the bus - Vite HMR re-executes this module on edit,
+ *  which would otherwise orphan the already-mounted viewport from a FRESH
+ *  listener set. Storing the bus on globalThis lets every module generation
+ *  share the SAME live store. */
+const TOAST_BUS_KEY = Symbol.for('cinevault.toast-bus');
+
+type BusHost = typeof globalThis & Record<symbol, ToastBusStore | undefined>;
+
+const bus: ToastBusStore = ((globalThis as BusHost)[TOAST_BUS_KEY] ??= {
+  listeners: new Set<ToastListener>(),
+});
 
 /**
  * Register a listener for emitted toasts.
  * @returns Unsubscribe function (idempotent) used for effect cleanup.
  */
 function subscribe(listener: ToastListener): () => void {
-  listeners.add(listener);
+  bus.listeners.add(listener);
   return () => {
-    listeners.delete(listener);
+    bus.listeners.delete(listener);
   };
 }
 
 /** Fan a freshly created toast out to every subscribed viewport. */
 function emit(toastRecord: CineVaultToast): void {
-  listeners.forEach((listener) => listener(toastRecord));
+  bus.listeners.forEach((listener) => listener(toastRecord));
 }
 
 /**

@@ -1,10 +1,11 @@
 ﻿/**
  * deck/IngestModal.tsx
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * ----------------------------------------------------------------------------
  * WHAT: "Ingest Media" modal with two tabs: (1) IMDb scraper - paste a URL/ID,
  *       extract metadata, preview, save; (2) Original screenplay - create a
- *       blank narrative canvas. Persists EXACTLY ONCE per entry and reports
- *       the saved entity upward via onMediaSaved (App only mirrors state).
+ *       blank narrative canvas (optional local poster image). Persists EXACTLY
+ *       ONCE per entry and reports the saved entity upward via onMediaSaved
+ *       (App only mirrors state).
  *
  * DATA HONESTY RULE: missing scrape fields stay missing. The UI renders
  *       "unknown" placeholders instead of inventing years/ratings/runtime -
@@ -21,10 +22,10 @@
 import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
-import { api } from '../../services/api';
+import { api, isTauri } from '../../services/api';
 import { getPosterSrc } from '../../utils/poster';
 import { Media, MediaType } from '../../types';
-import { Sparkles, Globe, PenTool, CheckCircle } from 'lucide-react';
+import { Sparkles, Globe, PenTool, CheckCircle, ImagePlus, AlertTriangle } from 'lucide-react';
 
 interface IngestModalProps {
   /** Modal visibility flag. */
@@ -68,6 +69,46 @@ export const IngestModal: React.FC<IngestModalProps> = ({
   const [originalType, setOriginalType] = useState<MediaType>('movie');
   const [originalSynopsis, setOriginalSynopsis] = useState('');
   const [originalGenres, setOriginalGenres] = useState('Drama, Thriller');
+  /** Backend-cached poster path for the original canvas (from import_poster_asset). */
+  const [originalPosterLocalPath, setOriginalPosterLocalPath] = useState<string | undefined>(undefined);
+  /** True while the poster file dialog + backend caching round-trip runs. */
+  const [isPickingPoster, setIsPickingPoster] = useState(false);
+
+  /**
+   * Tab switch that also clears any stale error banner - an extraction/save
+   * failure on one tab should not greet the user on the other.
+   */
+  const switchTab = (next: 'imdb' | 'original') => {
+    setError(null);
+    setTab(next);
+  };
+
+  /**
+   * Open the native image picker (Tauri only), then cache the picked file
+   * backend-side via import_poster_asset. The returned cached path is stored
+   * and previewed through getPosterSrc so the entry stays fully offline-safe.
+   */
+  const handleChoosePoster = async () => {
+    if (!isTauri() || isPickingPoster) return;
+    setIsPickingPoster(true);
+    setError(null);
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const picked = await open({
+        multiple: false,
+        filters: [{ name: 'Image', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+      });
+      if (typeof picked === 'string') {
+        const cachedPath = await api.importPosterAsset(picked);
+        setOriginalPosterLocalPath(cachedPath);
+      }
+    } catch (err) {
+      console.error('[Poster Import Error]', err);
+      setError(err instanceof Error ? err.message : String(err) || 'Failed to import poster image.');
+    } finally {
+      setIsPickingPoster(false);
+    }
+  };
 
   /**
    * Extract metadata for the entered URL/ID. Builds a Media entity WITHOUT
@@ -143,6 +184,8 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         synopsis: originalSynopsis.trim() || undefined,
         genres: [...new Set(originalGenres.split(',').map((g) => g.trim()).filter(Boolean))],
         directors: ['Original Creator'],
+        // Locally cached poster chosen on the Original tab (if any).
+        posterLocalPath: originalPosterLocalPath || undefined,
         userStatus: 'plan_to_watch',
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
@@ -166,6 +209,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     setOriginalTitle('');
     setOriginalSynopsis('');
     setOriginalGenres('Drama, Thriller');
+    setOriginalPosterLocalPath(undefined);
     onClose();
   };
 
@@ -191,7 +235,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         }}
       >
         <button
-          onClick={() => setTab('imdb')}
+          onClick={() => switchTab('imdb')}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -211,7 +255,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         </button>
 
         <button
-          onClick={() => setTab('original')}
+          onClick={() => switchTab('original')}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -243,9 +287,14 @@ export const IngestModal: React.FC<IngestModalProps> = ({
             color: 'var(--status-danger)',
             fontSize: '12px',
             marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
           }}
         >
-          âš ï¸ {error}
+          {/* Lucide icon instead of a text glyph (mojibake-proof). */}
+          <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+          <span>{error}</span>
         </div>
       )}
 
@@ -319,10 +368,10 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                     {scrapedData.title} {scrapedData.year ? `(${scrapedData.year})` : ''}
                   </h4>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '11px', color: 'var(--text-muted)', margin: '4px 0' }}>
-                    <span>â˜… {typeof scrapedData.imdbRating === 'number' ? scrapedData.imdbRating.toFixed(1) : renderUnknown()}</span>
-                    <span>â€¢</span>
+                    <span>★ {typeof scrapedData.imdbRating === 'number' ? scrapedData.imdbRating.toFixed(1) : renderUnknown()}</span>
+                    <span>•</span>
                     <span>{scrapedData.runtimeMinutes ? `${scrapedData.runtimeMinutes} min` : renderUnknown()}</span>
-                    <span>â€¢</span>
+                    <span>•</span>
                     <span>{scrapedData.genres.length > 0 ? scrapedData.genres.join(', ') : 'No genres listed'}</span>
                   </div>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -412,6 +461,57 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                   fontSize: '13px',
                 }}
               />
+            </div>
+          </div>
+
+          {/* Poster row: pick a local image; the backend caches it into the
+              poster scope and we preview the cached copy (offline-safe). */}
+          <div>
+            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+              Poster (optional)
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleChoosePoster}
+                isLoading={isPickingPoster}
+                icon={<ImagePlus size={14} />}
+              >
+                Choose Poster Image...
+              </Button>
+              {originalPosterLocalPath && getPosterSrc({ posterLocalPath: originalPosterLocalPath }) && (
+                <>
+                  <img
+                    src={getPosterSrc({ posterLocalPath: originalPosterLocalPath })}
+                    alt="Selected poster preview"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                    style={{
+                      width: '48px',
+                      height: '72px',
+                      objectFit: 'cover',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border-subtle)',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      color: 'var(--text-muted)',
+                      fontFamily: 'var(--font-mono)',
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {originalPosterLocalPath.split(/[\\/]/).pop()}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 

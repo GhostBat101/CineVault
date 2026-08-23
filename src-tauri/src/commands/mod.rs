@@ -17,6 +17,9 @@
 //!   - `extract_imdb` also populates `posterLocalPath` by best-effort caching
 //!   the poster into `<app_cache_dir>/posters/<imdbId>.jpg`; any cache
 //!   failure only logs a warning - extraction itself must not fail.
+//!   - `import_poster_asset` lets users attach local artwork (Original
+//!   Screenplays flow) by copying a validated image into the same posters
+//!   cache under a fresh uuid name; requires the dialog plugin capability.
 //!
 //! USES:    telemetry/hardware, scraper/imdb, ai/{engine,downloader},
 //!   db/repository, logger.
@@ -39,10 +42,33 @@ const ALLOWED_UPDATE_HOSTS: [&str; 3] = [
 /// Hard ceiling for the best-effort poster cache download inside extract_imdb.
 const POSTER_CACHE_TIMEOUT_SECS: u64 = 8;
 
+/// Hard ceiling for manually imported poster assets (8 MiB).
+const POSTER_IMPORT_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/**
+ * Read the persisted settings blob off the blocking pool (SQLite reads block;
+ * never call this inline from an async command thread). Returns None when no
+ * settings were ever saved or the read failed - callers treat that as defaults.
+ */
+async fn load_stored_settings(
+    repo: &State<'_, std::sync::Arc<Repository>>,
+) -> Option<serde_json::Value> {
+    let repo_handle = std::sync::Arc::clone(repo.inner());
+    let raw = tauri::async_runtime::spawn_blocking(move || {
+        repo_handle.get_app_settings_json().ok().flatten()
+    })
+    .await
+    .ok()
+    .flatten()?;
+
+    serde_json::from_str::<serde_json::Value>(&raw).ok()
+}
+
 #[tauri::command]
 pub async fn get_telemetry(
     monitor: State<'_, HardwareMonitor>,
     engine: State<'_, LocalAIEngine>,
+    repo: State<'_, std::sync::Arc<Repository>>,
 ) -> Result<TelemetryData, String> {
     // Feed the ACTIVE model's real catalog size into the VRAM budget model
     // instead of a hardcoded 1500MB guess.
@@ -53,7 +79,21 @@ pub async fn get_telemetry(
         .find(|m| m.is_active)
         .map(|m| m.file_size_mb)
         .unwrap_or(1500);
-    Ok(monitor.sample_telemetry(false, active_model_mb))
+
+    // forcedCpuMode is a user setting (default false when absent/unparsed);
+    // read it through the blocking pool like every other DB touchpoint.
+    let forced_cpu_mode = load_stored_settings(&repo)
+        .await
+        .map(|settings| {
+            settings
+                .get("forcedCpuMode")
+                .or_else(|| settings.get("forced_cpu_mode"))
+                .and_then(|flag| flag.as_bool())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    Ok(monitor.sample_telemetry(forced_cpu_mode, active_model_mb))
 }
 
 /**
@@ -156,6 +196,71 @@ async fn cache_poster_locally(
     Ok(target_path.to_string_lossy().to_string())
 }
 
+/**
+ * Import a LOCAL poster image (Original Screenplays flow) into the manual
+ * posters cache. Validates the extension, enforces an 8 MiB ceiling, then
+ * copies the file to `<app_cache_dir>/posters/manual_<uuid>.<ext>` so user
+ * artwork can never collide with scraped `<imdbId>.jpg` entries.
+ *
+ * Returns the destination path string; every failure mode is Err(String).
+ */
+#[tauri::command]
+pub async fn import_poster_asset(source_path: String, app_handle: AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+
+    // 1. Extension whitelist (case-insensitive).
+    let extension = std::path::Path::new(&source_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .ok_or_else(|| "Poster file has no extension".to_string())?;
+    if !matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
+        return Err(format!(
+            "Unsupported poster format '.{}' (allowed: jpg, jpeg, png, webp)",
+            extension
+        ));
+    }
+
+    // 2. Size ceiling: read via tokio so a huge selection fails fast,
+    // before any bytes are copied.
+    let source_meta = tokio::fs::metadata(&source_path)
+        .await
+        .map_err(|e| format!("Cannot access poster file: {}", e))?;
+    if !source_meta.is_file() {
+        return Err("Selected poster path is not a regular file".to_string());
+    }
+    if source_meta.len() > POSTER_IMPORT_MAX_BYTES {
+        return Err(format!(
+            "Poster file is {:.1} MB; the import limit is {} MB",
+            source_meta.len() as f64 / (1024.0 * 1024.0),
+            POSTER_IMPORT_MAX_BYTES / (1024 * 1024)
+        ));
+    }
+
+    // 3. Resolve the SAME posters dir used by cache_poster_locally.
+    let posters_dir = app_handle
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Cannot resolve app cache dir: {}", e))?
+        .join("posters");
+    tokio::fs::create_dir_all(&posters_dir)
+        .await
+        .map_err(|e| format!("Failed to create poster cache dir: {}", e))?;
+
+    // 4. Copy under a collision-proof uuid name.
+    let target_path = posters_dir.join(format!("manual_{}.{}", uuid::Uuid::new_v4(), extension));
+    tokio::fs::copy(&source_path, &target_path)
+        .await
+        .map_err(|e| format!("Failed to copy poster into the vault cache: {}", e))?;
+
+    crate::logger::Logger::info(&format!(
+        "Imported manual poster asset {} -> {}",
+        source_path,
+        target_path.to_string_lossy()
+    ));
+    Ok(target_path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn get_app_settings(
     repo: State<'_, std::sync::Arc<Repository>>,
@@ -196,26 +301,40 @@ pub async fn generate_ai_summary(
     mut request: InferenceRequest,
     engine: State<'_, LocalAIEngine>,
     repo: State<'_, std::sync::Arc<Repository>>,
+    monitor: State<'_, HardwareMonitor>,
     app_handle: AppHandle,
 ) -> Result<InferenceResponse, String> {
     crate::logger::Logger::info(&format!("Generating AI Summary for prompt: {:.60}...", request.prompt));
 
     // â”€â”€ Inject persisted user preferences when the request omits them â”€â”€â”€â”€
-    if let Ok(Some(raw)) = repo.get_app_settings_json() {
-        if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&raw) {
-            if request.temperature.is_none() {
-                request.temperature = settings
-                    .get("temperature")
-                    .and_then(|t| t.as_f64())
-                    .map(|t| t as f32);
-            }
-            if request.gpu_layers.is_none() {
-                // 'cpu_only' pins inference to the CPU; otherwise offload all.
-                request.gpu_layers = match settings.get("inferenceMode").and_then(|m| m.as_str()) {
-                    Some("cpu_only") => Some(0),
-                    _ => Some(-1),
-                };
-            }
+    // The settings read is a blocking SQLite call - route it through
+    // spawn_blocking like every other DB touchpoint.
+    if let Some(settings) = load_stored_settings(&repo).await {
+        if request.temperature.is_none() {
+            request.temperature = settings
+                .get("temperature")
+                .and_then(|t| t.as_f64())
+                .map(|t| t as f32);
+        }
+        if request.gpu_layers.is_none() {
+            request.gpu_layers = match settings.get("inferenceMode").and_then(|m| m.as_str()) {
+                // 'cpu_only' pins inference to the CPU...
+                Some("cpu_only") => Some(0),
+                // ...gpu_auto / unset derives a SAFE layer count from live
+                // VRAM telemetry instead of blindly offloading ALL layers
+                // (which hard-crashes low-VRAM GPUs on larger models).
+                _ => {
+                    let active_model_mb = engine
+                        .get_vault_status()
+                        .models
+                        .iter()
+                        .find(|m| m.is_active)
+                        .map(|m| m.file_size_mb)
+                        .unwrap_or(1500);
+                    let telemetry = monitor.sample_telemetry(false, active_model_mb);
+                    Some(telemetry.gpu_layers_offloaded as i64)
+                }
+            };
         }
     }
 
@@ -427,7 +546,13 @@ fn sanitize_installer_filename(filename: &str) -> Option<String> {
     Some(cleaned)
 }
 
-/// Validate that an installer URL points at an allow-listed release host.
+/// Path prefix every official installer URL must carry under the release
+/// host. Compared case-insensitively.
+const ALLOWED_UPDATE_PATH_PREFIX: &str = "/ghostbat101/cinevault/releases/download/";
+
+/// Validate that an installer URL points at an allow-listed release host AND
+/// at the official CineVault release-download path on it. Blocks lookalike
+/// hosts and same-host paths that merely resemble the release route.
 fn validate_installer_url(url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url)
         .map_err(|_| "Invalid installer URL".to_string())?;
@@ -437,6 +562,15 @@ fn validate_installer_url(url: &str) -> Result<(), String> {
     let host = parsed.host_str().unwrap_or_default().to_lowercase();
     if !ALLOWED_UPDATE_HOSTS.contains(&host.as_str()) {
         return Err(format!("Installer host '{}' is not an allowed update source", host));
+    }
+    // Case-insensitive path check: only the official release download route
+    // may serve installers, even on otherwise allow-listed hosts.
+    let path = parsed.path().to_lowercase();
+    if !path.starts_with(ALLOWED_UPDATE_PATH_PREFIX) {
+        return Err(
+            "Installer URL must point at GhostBat101/CineVault's official release download path"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -546,6 +680,10 @@ pub async fn download_and_install_update(
         .spawn()
         .map_err(|e| format!("Failed to launch installer: {}", e))?;
 
-    // Exit current app so setup can proceed
-    std::process::exit(0);
+    // Exit through the Tauri runtime: AppHandle::exit posts the exit event
+    // through the event loop so cleanup hooks (incl. SQLite WAL shutdown on
+    // teardown) still run - the previous std::process::exit(0) skipped ALL
+    // of that. The explicit Ok(true) keeps the tail-expression warning-free.
+    app_handle.exit(0);
+    Ok(true)
 }

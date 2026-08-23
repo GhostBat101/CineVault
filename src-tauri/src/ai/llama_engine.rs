@@ -146,9 +146,17 @@ pub fn generate_with_model(
     ctx.decode(&mut batch).map_err(|e| format!("Prefill decode failed: {}", e))?;
 
     // â”€â”€ Sampling chain: temperature -> distribution pick â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Seed entropy: the previous constant (42) made every run of the same
+    // prompt produce byte-identical text; derive the seed from wall-clock
+    // sub-second nanos instead. Falls back to the old constant only if the
+    // clock is somehow before the epoch.
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(42);
     let mut sampler = LlamaSampler::chain_simple([
         LlamaSampler::temp(temperature.clamp(0.05, 1.5)),
-        LlamaSampler::dist(42), // deterministic-ish seed; quality fine for summaries
+        LlamaSampler::dist(seed), // time-derived per-request entropy
     ]);
 
     // â”€â”€ Incremental generation loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

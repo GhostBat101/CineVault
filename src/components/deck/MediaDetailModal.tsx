@@ -12,17 +12,20 @@
  *       handleGenerateAI) AND is user-switchable via aria-pressed buttons -
  *       the flip logic stays, but the state is now visible and manual.
  *
- * PERSISTENCE FLOW: every mutation here (status change / AI summary) saves via
- *       `api.saveMedia` FIRST, then reports the updated entity through
- *       `onMediaUpdated` so App.tsx can refresh selectedMedia + mediaList.
- *       This is what makes regenerated summaries survive close/reopen.
+ * PERSISTENCE FLOW: every mutation here (status change / AI summary / review
+ *       notes) saves via `api.saveMedia` FIRST, then reports the updated entity
+ *       through `onMediaUpdated` so App.tsx can refresh selectedMedia +
+ *       mediaList. This is what makes regenerated summaries and review drafts
+ *       survive close/reopen. Review notes flush on blur AND on close via a
+ *       draft ref (handleCloseWithReviewFlush), covering Escape/backdrop/X and
+ *       the Director's Suite jump.
  *
  * USES:    services/api.ts, hooks/useAISummary.ts, types/index.ts,
  *          common/{Modal,Button,Markdown}.tsx, utils/poster.ts, index.css
  *          (.glass-panel, .cv-border-glow).
  * USED BY: App.tsx.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Markdown } from '../common/Markdown';
@@ -113,6 +116,12 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'ai-breakdown'>('overview');
   /** True while a status change is being persisted. */
   const [isSavingStatus, setIsSavingStatus] = useState(false);
+  /**
+   * Latest review-notes draft, mirrored from the textarea on every change so
+   * a close (Escape/backdrop/X or Director's Suite jump) can flush uncommitted
+   * edits that would otherwise be lost between blur and close.
+   */
+  const reviewDraftRef = useRef('');
 
   // Reset/sync local state whenever opened or switched to a different entry.
   useEffect(() => {
@@ -120,11 +129,26 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
       setSummary(media.aiSummary || '');
       clearError();
       setActiveSubTab(media.aiSummary ? 'ai-breakdown' : 'overview');
+      reviewDraftRef.current = media.reviewNotes ?? '';
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [media?.id]);
 
   if (!media) return null;
+
+  /**
+   * Persist the review-notes draft when it differs from the stored value.
+   * Shared by the textarea blur AND the close wrapper below.
+   */
+  const persistReview = (value: string) => {
+    if (value !== (media.reviewNotes ?? '')) handleUpdateFields({ reviewNotes: value });
+  };
+
+  /** Close wrapper: flush any uncommitted review draft BEFORE closing. */
+  const handleCloseWithReviewFlush = () => {
+    persistReview(reviewDraftRef.current);
+    onClose();
+  };
 
   /** Kick off (or regenerate) the local AI narrative analysis. */
   const handleGenerateAI = async () => {
@@ -213,7 +237,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleCloseWithReviewFlush}
       title={media.title}
       subtitle={`${media.year ? `${media.year} • ` : ''}${typeInfo.label.toUpperCase()} • ${media.genres.join(', ')}`}
       maxWidth="720px"
@@ -442,7 +466,9 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 icon={<Compass size={14} />}
                 onClick={() => {
                   onOpenDirectorSuite(media);
-                  onClose();
+                  // Same flush path as a normal close so the review draft is
+                  // persisted before the modal unmounts.
+                  handleCloseWithReviewFlush();
                 }}
               >
                 Director's Suite
@@ -492,7 +518,8 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               </button>
             </div>
 
-            {/* Personal Review Notes - saved on blur */}
+            {/* Personal Review Notes - saved on blur AND on close (draft is
+                mirrored into reviewDraftRef so nothing uncommitted is lost). */}
             <div>
               <label className="cv-kicker" style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
                 Your Review & Notes
@@ -501,10 +528,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 rows={2}
                 defaultValue={media.reviewNotes ?? ''}
                 key={`review_${media.id}`}
-                onBlur={(e) => {
-                  const next = e.target.value;
-                  if (next !== (media.reviewNotes ?? '')) handleUpdateFields({ reviewNotes: next });
+                onChange={(e) => {
+                  reviewDraftRef.current = e.target.value;
                 }}
+                onBlur={(e) => persistReview(e.target.value)}
                 placeholder="Private thoughts, hot takes, rewatch notes..."
                 style={{
                   width: '100%',

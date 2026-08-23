@@ -188,6 +188,12 @@ impl ImdbScraper {
             if let Ok(resp) = client.get(&url).send().await {
                 if resp.status().is_success() {
                     if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        // Disambiguation pages only list OTHER articles - they
+                        // never describe this title. Treat them as a miss and
+                        // keep trying the remaining candidates.
+                        if json.get("type") == Some(&serde_json::json!("disambiguation")) {
+                            continue;
+                        }
                         if let Some(extract) = json.get("extract").and_then(|e| e.as_str()) {
                             if !extract.trim().is_empty() && extract.len() > 30 {
                                 return Some(extract.trim().to_string());
@@ -201,8 +207,12 @@ impl ImdbScraper {
     }
 
     async fn fetch_suggestion_api(imdb_id: &str) -> Result<ScrapedMedia, String> {
-        let first_char = imdb_id.chars().next().unwrap_or('t').to_ascii_lowercase();
-        let api_url = format!("https://v2.sg.media-imdb.com/suggestion/{}/{}.json", first_char, imdb_id);
+        // The suggestion endpoint indexes ids LOWERCASED; extract_imdb_id
+        // preserves input casing (e.g. "TT1375666"), so normalize the URL id
+        // here and compare returned ids case-insensitively.
+        let lowered_id = imdb_id.to_ascii_lowercase();
+        let first_char = lowered_id.chars().next().unwrap_or('t');
+        let api_url = format!("https://v2.sg.media-imdb.com/suggestion/{}/{}.json", first_char, lowered_id);
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -216,7 +226,8 @@ impl ImdbScraper {
         if let Some(entries) = json.get("d").and_then(|d| d.as_array()) {
             for entry in entries {
                 if let Some(id) = entry.get("id").and_then(|i| i.as_str()) {
-                    if id == imdb_id {
+                    // Case-insensitive: uppercase TT input must still match.
+                    if id.eq_ignore_ascii_case(imdb_id) {
                         let title = entry.get("l").and_then(|l| l.as_str()).unwrap_or("Untitled Media").to_string();
                         let year = entry.get("y").and_then(|y| y.as_i64()).map(|y| y as i32);
                         let poster_url = entry.get("i").and_then(|i| i.get("imageUrl")).and_then(|u| u.as_str()).map(|s| s.to_string());

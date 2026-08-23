@@ -8,6 +8,9 @@
 //! DESIGN NOTES:
 //!   - PORTABLE MODE: everything (logs, DB, models) lives next to the
 //!   executable rather than %APPDATA%, so the app runs from any folder.
+//!   EXCEPTION: when that directory is not writable (Program Files installs,
+//!   AV-locked dirs), boot falls back to the OS per-user app-data dir via a
+//!   create+delete probe-file check - see [`dir_is_writable`].
 //!   - The [`db::repository::Repository`] is managed as an `std::sync::Arc`
 //!   so blocking SQLite calls can be cloned into
 //!   `tauri::async_runtime::spawn_blocking` workers without holding a
@@ -20,6 +23,7 @@
 
 use tauri::Manager;
 use std::fs;
+use std::path::Path;
 
 pub mod db;
 pub mod scraper;
@@ -28,20 +32,55 @@ pub mod telemetry;
 pub mod commands;
 pub mod logger;
 
+/// Probe whether `dir` accepts writes by creating and removing a marker
+/// file. Any failure along the way means the directory is unusable as the
+/// portable base (read-only volume, permission denied, ...).
+fn dir_is_writable(dir: &Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe_file = dir.join(".cinevault_write_probe");
+    match fs::File::create(&probe_file) {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe_file);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // PORTABLE MODE: Resolve the directory where CineVault.exe lives, rather than %APPDATA%
+            // PORTABLE MODE: default base is the directory holding
+            // CineVault.exe (logs/, cinevault.db and models/ all live beside
+            // it). Installs under write-protected locations must not crash
+            // boot: probe writability FIRST and fall back to the OS per-user
+            // app-data dir when the probe fails.
             let exe_path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let app_data_dir = exe_path.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf();
+            let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
 
-            // 1. Portable Logging Directory
-            let logs_dir = app_data_dir.join("logs");
+            let (base_dir, base_dir_source) = if dir_is_writable(&exe_dir) {
+                (exe_dir, "portable (beside executable)")
+            } else {
+                let fallback = app
+                    .path()
+                    .app_data_dir()
+                    .unwrap_or_else(|_| std::env::temp_dir().join("CineVault"));
+                fs::create_dir_all(&fallback).unwrap_or_default();
+                (fallback, "app-data fallback (portable dir not writable)")
+            };
+
+            // 1. Logging Directory (inside whichever base won)
+            let logs_dir = base_dir.join("logs");
             let _ = logger::Logger::init(&logs_dir);
-            logger::Logger::info(&format!("CineVault Booting. Base Directory: {:?}", app_data_dir));
+            logger::Logger::info(&format!(
+                "CineVault Booting. Base Directory: {:?} ({})",
+                base_dir, base_dir_source
+            ));
 
             // 2. Database
-            let db_path = app_data_dir.join("cinevault.db");
+            let db_path = base_dir.join("cinevault.db");
             logger::Logger::info(&format!("Initializing SQLite Database at {:?}", db_path));
             let repo = db::repository::Repository::new(&db_path).expect("Failed to initialize database");
             repo.run_migrations().expect("Failed to run database migrations");
@@ -53,7 +92,7 @@ pub fn run() {
             app.manage(hardware_monitor);
 
             // 4. AI Models Directory
-            let models_dir = app_data_dir.join("models");
+            let models_dir = base_dir.join("models");
             fs::create_dir_all(&models_dir).unwrap_or_default();
             logger::Logger::info(&format!("Mounting AI Models Vault at {:?}", models_dir));
             let ai_engine = ai::engine::LocalAIEngine::new(models_dir);
@@ -62,9 +101,11 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::get_telemetry,
             commands::extract_imdb,
+            commands::import_poster_asset,
             commands::get_app_settings,
             commands::save_app_settings,
             commands::generate_ai_summary,

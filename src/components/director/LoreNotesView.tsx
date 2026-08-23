@@ -1,6 +1,6 @@
 ﻿/**
  * director/LoreNotesView.tsx
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * ----------------------------------------------------------------------------
  * WHAT: Lore & continuity workspace: category-filtered note cards plus a
  *       creation modal and the Local AI Continuity Audit modal that checks a
  *       pasted scene draft against all recorded lore.
@@ -20,7 +20,7 @@ import { LoreNote, Media } from '../../types';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 import { Markdown } from '../common/Markdown';
-import { Plus, Sparkles, BookOpen, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Sparkles, BookOpen, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { useAISummary } from '../../hooks/useAISummary';
 
 interface LoreNotesViewProps {
@@ -114,7 +114,15 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
   const handleCreateNote = () => {
     if (!newTitle.trim() || !newContent.trim()) return;
 
-    const tags = [...new Set(newTags.split(',').map((t) => t.trim()).filter(Boolean))];
+    // Trim, strip any leading '#' markers users type ("#Magic"), drop empties.
+    const tags = [
+      ...new Set(
+        newTags
+          .split(',')
+          .map((t) => t.trim().replace(/^#+/, ''))
+          .filter(Boolean)
+      ),
+    ];
 
     if (editingNote) {
       // Update-in-place preserving identity + creation timestamp.
@@ -160,7 +168,8 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
     setNewTitle(note.title);
     setNewCategory(note.category);
     setNewContent(note.contentMarkdown);
-    setNewTags(note.tags.join(', '));
+    // Legacy/foreign notes may carry a null/undefined tags array.
+    setNewTags((note.tags || []).join(', '));
     setIsAddNoteOpen(true);
   };
 
@@ -170,14 +179,22 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
     setNotes((prev) => prev.filter((n) => n.id !== note.id));
   };
 
+  /** Hard cap on lore context fed into the audit prompt (prompt-budget guard). */
+  const LORE_CONTEXT_BUDGET = 4000;
+
   /** Run the AI continuity audit against ALL notes for the current title. */
   const handleRunContinuityAudit = () => {
     if (!auditScenePrompt.trim()) return;
-    const loreContext = notes
+    const assembled = notes
       .map((n) => `[${n.category}] ${n.title}: ${n.contentMarkdown}`)
       .join('\n\n');
+    // Cap the assembled context so huge vaults cannot blow the prompt budget.
+    const loreContext =
+      assembled.length > LORE_CONTEXT_BUDGET
+        ? `${assembled.slice(0, LORE_CONTEXT_BUDGET)}\n[truncated]`
+        : assembled;
 
-    const prompt = `Perform a screenplay continuity audit.\n\nEstablished Lore Rules:\n${loreContext || 'None specified.'}\n\nProposed Scene / Draft Action:\n${auditScenePrompt}\n\nCheck for plot holes, world rule violations, and logical contradictions.`;
+    const prompt = `Perform a screenplay continuity audit.\n\nTitle: ${media?.title || 'Untitled Project'}\n\nEstablished Lore Rules:\n${loreContext || 'None specified.'}\n\nProposed Scene / Draft Action:\n${auditScenePrompt}\n\nCheck for plot holes, world rule violations, and logical contradictions.`;
     runAudit(prompt);
   };
 
@@ -401,7 +418,7 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
                 />
               </div>
 
-              {note.tags && note.tags.length > 0 && (
+              {note.tags?.length ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)' }}>
                   {note.tags.map((tag, tagIndex) => (
                     <span
@@ -420,7 +437,7 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
                     </span>
                   ))}
                 </div>
-              )}
+              ) : null}
             </div>
           ))}
         </div>
@@ -593,9 +610,14 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
                 borderRadius: 'var(--radius-sm)',
                 color: 'var(--status-danger)',
                 fontSize: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
               }}
             >
-              âš ï¸ {auditError}
+              {/* Lucide icon instead of a text glyph (mojibake-proof). */}
+              <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+              <span>{auditError}</span>
             </div>
           )}
 
