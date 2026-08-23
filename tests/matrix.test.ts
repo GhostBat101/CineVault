@@ -47,8 +47,31 @@ describe('CharacterTensionEngine Unit Tests', () => {
 
     const graph = engine.exportAdjacencyList();
 
-    expect(graph['Cobb']).toBeDefined();
-    expect(graph['Cobb'][0].target).toBe('Arthur');
-    expect(graph['Cobb'][0].tension).toBe(2);
+    // Nodes are keyed by character ID (not display name).
+    expect(graph['c1']).toBeDefined();
+    expect(graph['c1'][0].target).toBe('c2');
+    expect(graph['c1'][0].tension).toBe(2);
+  });
+
+  it('should key nodes by id so duplicate names stay two distinct nodes', () => {
+    const engine = new CharacterTensionEngine();
+
+    engine.addCharacter({ id: 's1', name: 'Sarah', roleType: 'protagonist' });
+    engine.addCharacter({ id: 's2', name: 'Sarah', roleType: 'antagonist' });
+
+    engine.setRelationship({
+      sourceCharacterId: 's1',
+      targetCharacterId: 's2',
+      relationshipType: 'Mirror Rivalry',
+      tensionScore: 6,
+    });
+
+    const graph = engine.exportAdjacencyList();
+
+    expect(Object.keys(graph)).toHaveLength(2);
+    expect(graph['s1']).toBeDefined();
+    expect(graph['s2']).toBeDefined();
+    expect(graph['s1'][0].target).toBe('s2');
+    expect(graph['s2'][0].target).toBe('s1');
   });
 });

@@ -209,7 +209,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUpdateError(null);
 
     try {
-      await api.downloadAndInstallUpdate(downloadUrl, filename);
+      // Digest (when GitHub published one) is verified fail-closed backend-side.
+      await api.downloadAndInstallUpdate(downloadUrl, filename, exeAsset?.digest || '');
       // Success normally ends with the backend exiting the process to hand
       // over to the installer; reaching here means it returned without exit.
       setInstallStatusText('Installer launched - CineVault will close to complete setup.');

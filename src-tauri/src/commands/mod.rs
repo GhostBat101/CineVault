@@ -28,9 +28,13 @@
 use tauri::{AppHandle, Emitter, State};
 use crate::telemetry::hardware::{TelemetryData, HardwareMonitor};
 use crate::scraper::imdb::{ScrapedMedia, ImdbScraper};
-use crate::ai::engine::{InferenceRequest, InferenceResponse, LocalAIEngine, ModelVaultStatus};
+use crate::ai::engine::{
+    InferenceRequest, InferenceResponse, LocalAIEngine, ModelStatusItem, ModelVaultStatus,
+};
 use crate::ai::downloader::ModelDownloader;
+use crate::ai::models::ModelMetadata;
 use crate::db::repository::{FullDatabaseExport, MediaRecord, Repository};
+use sha2::{Digest, Sha256};
 
 /// Only these hosts may serve an auto-update installer executable.
 const ALLOWED_UPDATE_HOSTS: [&str; 3] = [
@@ -64,6 +68,74 @@ async fn load_stored_settings(
     serde_json::from_str::<serde_json::Value>(&raw).ok()
 }
 
+/**
+ * Persisted shape of one user-imported GGUF under app_settings key
+ * `customModels` (camelCase on the wire). Defaults keep older entries
+ * parseable when new fields are introduced.
+ */
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CustomModelEntry {
+    pub id: String,
+    pub name: String,
+    pub filename: String,
+    #[serde(default = "default_custom_context_length")]
+    pub context_length: u32,
+    #[serde(default = "default_custom_prompt_format")]
+    pub prompt_format: String,
+}
+
+fn default_custom_context_length() -> u32 {
+    4096
+}
+
+fn default_custom_prompt_format() -> String {
+    "chatml".to_string()
+}
+
+/**
+ * Read persisted `customModels` from settings (blocking SQLite via
+ * spawn_blocking) and install them into the engine catalog. Must run BEFORE
+ * any consumer of [`LocalAIEngine::effective_catalog`] in a command:
+ * vault status, activation checks, and inference lookup all include customs.
+ */
+async fn hydrate_custom_models(
+    repo: &State<'_, std::sync::Arc<Repository>>,
+    engine: &State<'_, LocalAIEngine>,
+) {
+    let entries: Vec<CustomModelEntry> = load_stored_settings(repo)
+        .await
+        .and_then(|settings| settings.get("customModels").cloned())
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+
+    let vault_dir = engine.get_vault_dir();
+    let mut metas = Vec::with_capacity(entries.len());
+    for entry in entries {
+        // Disk size feeds the VRAM budget model; a missing file degrades to
+        // 0 MB rather than blocking status rendering.
+        let file_size_mb = tokio::fs::metadata(vault_dir.join(&entry.filename))
+            .await
+            .map(|meta| meta.len() / (1024 * 1024))
+            .unwrap_or(0);
+        metas.push(ModelMetadata {
+            id: entry.id.clone(),
+            name: entry.name.clone(),
+            parameter_size: "Unknown".to_string(),
+            quantization: "GGUF".to_string(),
+            file_size_mb,
+            download_url: String::new(),
+            filename: entry.filename.clone(),
+            sha256_checksum: String::new(),
+            context_length: entry.context_length as usize,
+            is_default: false,
+            prompt_format: entry.prompt_format.clone(),
+        });
+    }
+
+    engine.set_custom_models(metas);
+}
+
 #[tauri::command]
 pub async fn get_telemetry(
     monitor: State<'_, HardwareMonitor>,
@@ -80,16 +152,20 @@ pub async fn get_telemetry(
         .map(|m| m.file_size_mb)
         .unwrap_or(1500);
 
-    // forcedCpuMode is a user setting (default false when absent/unparsed);
-    // read it through the blocking pool like every other DB touchpoint.
+    // CPU-forced detection: modern `inferenceMode: "cpu_only"` OR the legacy
+    // boolean `forcedCpuMode`. Read through the blocking pool like every
+    // other DB touchpoint; absent/unparsed settings mean GPU-auto (false).
     let forced_cpu_mode = load_stored_settings(&repo)
         .await
         .map(|settings| {
-            settings
+            let legacy_flag = settings
                 .get("forcedCpuMode")
                 .or_else(|| settings.get("forced_cpu_mode"))
                 .and_then(|flag| flag.as_bool())
-                .unwrap_or(false)
+                .unwrap_or(false);
+            let cpu_only_mode =
+                settings.get("inferenceMode").and_then(|mode| mode.as_str()) == Some("cpu_only");
+            cpu_only_mode || legacy_flag
         })
         .unwrap_or(false);
 
@@ -306,9 +382,31 @@ pub async fn generate_ai_summary(
 ) -> Result<InferenceResponse, String> {
     crate::logger::Logger::info(&format!("Generating AI Summary for prompt: {:.60}...", request.prompt));
 
+    // Custom GGUF models must be visible to vault status + inference lookup.
+    hydrate_custom_models(&repo, &engine).await;
+
+    // â”€â”€ SAFE VRAM clamp - computed UNCONDITIONALLY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // When the request omits gpu_layers we derive a safe offload count from
+    // live VRAM telemetry REGARDLESS of whether any settings blob exists yet
+    // (fresh installs). Absence of settings must never fall through to the
+    // engine's "-1 = offload all" path, which hard-crashes low-VRAM GPUs.
+    if request.gpu_layers.is_none() {
+        let active_model_mb = engine
+            .get_vault_status()
+            .models
+            .iter()
+            .find(|m| m.is_active)
+            .map(|m| m.file_size_mb)
+            .unwrap_or(1500);
+        let telemetry = monitor.sample_telemetry(false, active_model_mb);
+        request.gpu_layers = Some(telemetry.gpu_layers_offloaded as i64); // safe count
+    }
+
     // â”€â”€ Inject persisted user preferences when the request omits them â”€â”€â”€â”€
     // The settings read is a blocking SQLite call - route it through
-    // spawn_blocking like every other DB touchpoint.
+    // spawn_blocking like every other DB touchpoint. Settings may only
+    // OVERRIDE the computed clamp above: cpu_only pins to zero layers, an
+    // explicit user layer count wins; anything else keeps the safe count.
     if let Some(settings) = load_stored_settings(&repo).await {
         if request.temperature.is_none() {
             request.temperature = settings
@@ -316,25 +414,16 @@ pub async fn generate_ai_summary(
                 .and_then(|t| t.as_f64())
                 .map(|t| t as f32);
         }
-        if request.gpu_layers.is_none() {
-            request.gpu_layers = match settings.get("inferenceMode").and_then(|m| m.as_str()) {
-                // 'cpu_only' pins inference to the CPU...
-                Some("cpu_only") => Some(0),
-                // ...gpu_auto / unset derives a SAFE layer count from live
-                // VRAM telemetry instead of blindly offloading ALL layers
-                // (which hard-crashes low-VRAM GPUs on larger models).
-                _ => {
-                    let active_model_mb = engine
-                        .get_vault_status()
-                        .models
-                        .iter()
-                        .find(|m| m.is_active)
-                        .map(|m| m.file_size_mb)
-                        .unwrap_or(1500);
-                    let telemetry = monitor.sample_telemetry(false, active_model_mb);
-                    Some(telemetry.gpu_layers_offloaded as i64)
+        match settings.get("inferenceMode").and_then(|mode| mode.as_str()) {
+            // 'cpu_only' pins inference to the CPU...
+            Some("cpu_only") => request.gpu_layers = Some(0),
+            _ => {
+                if let Some(user_layers) =
+                    settings.get("gpuLayers").and_then(|layers| layers.as_i64())
+                {
+                    request.gpu_layers = Some(user_layers);
                 }
-            };
+            }
         }
     }
 
@@ -389,15 +478,25 @@ pub async fn generate_ai_summary(
 }
 
 #[tauri::command]
-pub async fn get_model_vault_status(engine: State<'_, LocalAIEngine>) -> Result<ModelVaultStatus, String> {
+pub async fn get_model_vault_status(
+    engine: State<'_, LocalAIEngine>,
+    repo: State<'_, std::sync::Arc<Repository>>,
+) -> Result<ModelVaultStatus, String> {
+    // Persisted custom models join the static catalog in the response.
+    hydrate_custom_models(&repo, &engine).await;
     Ok(engine.get_vault_status())
 }
 
 #[tauri::command]
-pub async fn set_active_ai_model(model_id: String, engine: State<'_, LocalAIEngine>) -> Result<bool, String> {
+pub async fn set_active_ai_model(
+    model_id: String,
+    engine: State<'_, LocalAIEngine>,
+    repo: State<'_, std::sync::Arc<Repository>>,
+) -> Result<bool, String> {
     // Reject unknown model ids so the UI can never "activate" a phantom entry.
-    let known = engine.get_supported_models().iter().any(|m| m.id == model_id);
-    if !known {
+    // Customs count as known once hydrated.
+    hydrate_custom_models(&repo, &engine).await;
+    if !engine.is_known_model(&model_id) {
         return Err(format!("Unknown model ID: {}", model_id));
     }
     engine.set_active_model(&model_id);
@@ -408,8 +507,13 @@ pub async fn set_active_ai_model(model_id: String, engine: State<'_, LocalAIEngi
 pub async fn download_ai_model(
     model_id: String,
     engine: State<'_, LocalAIEngine>,
+    repo: State<'_, std::sync::Arc<Repository>>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
+    hydrate_custom_models(&repo, &engine).await;
+
+    // Lookup stays on the STATIC catalog only: customs are already on disk
+    // and have no download URL - they can never be "downloaded".
     let supported = engine.get_supported_models();
     let meta = supported.into_iter().find(|m| m.id == model_id)
         .ok_or_else(|| format!("Unknown model ID: {}", model_id))?;
@@ -428,6 +532,129 @@ pub async fn download_ai_model(
     ).await?;
 
     Ok(target.to_string_lossy().to_string())
+}
+
+/**
+ * Import a LOCAL .gguf file into the Model Vault end-to-end (Wave-3 C1):
+ * validate GGUF magic bytes, copy into the vault under a sanitized unique
+ * filename, persist metadata into the `customModels` settings array
+ * (read-merge via spawn_blocking), hydrate the engine catalog and return
+ * the full catalog-style status item for the new model.
+ */
+#[tauri::command]
+pub async fn import_custom_model(
+    source_path: String,
+    display_name: String,
+    engine: State<'_, LocalAIEngine>,
+    repo: State<'_, std::sync::Arc<Repository>>,
+) -> Result<ModelStatusItem, String> {
+    use tokio::io::AsyncReadExt;
+
+    // 1. Magic-byte validation: a real GGUF always starts with "GGUF".
+    const GGUF_MAGIC: [u8; 4] = [0x47, 0x47, 0x55, 0x46]; // 'G' 'G' 'U' 'F'
+    let mut source = tokio::fs::File::open(&source_path)
+        .await
+        .map_err(|e| format!("Cannot open source file: {}", e))?;
+    let mut magic = [0u8; 4];
+    source
+        .read_exact(&mut magic)
+        .await
+        .map_err(|e| format!("File too small to be a GGUF model: {}", e))?;
+    drop(source);
+    if magic != GGUF_MAGIC {
+        return Err(format!(
+            "NOT_A_GGUF_FILE: '{}' lacks the GGUF magic header",
+            display_name.trim()
+        ));
+    }
+
+    // 2. Filename derivation: sanitized displayName + lowercased source
+    // extension (.gguf default), collision-proofed with _2/_3 suffixes.
+    let source_extension = std::path::Path::new(&source_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!(".{}", ext.to_ascii_lowercase()))
+        .unwrap_or_else(|| ".gguf".to_string());
+    let sanitized_base: String = display_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        .collect();
+    let trimmed_base = sanitized_base.trim_matches('.').to_string();
+    let base = if trimmed_base.is_empty() {
+        "custom-model".to_string()
+    } else {
+        trimmed_base
+    };
+
+    let vault_dir = engine.get_vault_dir();
+    tokio::fs::create_dir_all(&vault_dir)
+        .await
+        .map_err(|e| format!("Failed to create Model Vault dir: {}", e))?;
+
+    let mut candidate_filename = format!("{}{}", base, source_extension);
+    let mut suffix = 2u32;
+    while vault_dir.join(&candidate_filename).exists() {
+        candidate_filename = format!("{}_{}{}", base, suffix, source_extension);
+        suffix += 1;
+    }
+
+    // 3. Streamed copy into the vault.
+    let target_path = vault_dir.join(&candidate_filename);
+    tokio::fs::copy(&source_path, &target_path)
+        .await
+        .map_err(|e| format!("Failed to copy model into the Model Vault: {}", e))?;
+
+    // 4. Persist metadata: READ-MERGE the `customModels` settings array on
+    // the blocking pool; entries sharing this id are replaced (idempotent).
+    let entry = CustomModelEntry {
+        id: format!("custom_{}", uuid::Uuid::new_v4()),
+        name: if display_name.trim().is_empty() {
+            base.clone()
+        } else {
+            display_name.trim().to_string()
+        },
+        filename: candidate_filename.clone(),
+        context_length: default_custom_context_length(),
+        prompt_format: default_custom_prompt_format(),
+    };
+
+    let repo_handle = std::sync::Arc::clone(repo.inner());
+    let entry_for_save = entry.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let mut list: Vec<CustomModelEntry> = repo_handle
+            .get_app_settings_json()
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|settings| settings.get("customModels").cloned())
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        list.retain(|existing| existing.id != entry_for_save.id);
+        list.push(entry_for_save);
+
+        let patch = serde_json::json!({ "customModels": list });
+        let serialized =
+            serde_json::to_string(&patch).map_err(|e| format!("Custom model payload not serializable: {}", e))?;
+        repo_handle
+            .save_app_settings_json(&serialized)
+            .map_err(|e| format!("Failed to persist custom model metadata: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Database worker failed: {}", e))??;
+
+    crate::logger::Logger::info(&format!(
+        "Imported custom model '{}' as {} ({})",
+        entry.name, entry.id, candidate_filename
+    ));
+
+    // 5. Hydrate + return the catalog-style item for this id.
+    hydrate_custom_models(&repo, &engine).await;
+    engine
+        .get_vault_status()
+        .models
+        .into_iter()
+        .find(|item| item.id == entry.id)
+        .ok_or_else(|| format!("Imported model '{}' missing from catalog after hydration", entry.id))
 }
 
 #[tauri::command]
@@ -482,8 +709,12 @@ pub async fn export_database_json(repo: State<'_, std::sync::Arc<Repository>>) -
     .map_err(|e| format!("Database worker failed: {}", e))?
 }
 
-/// Restore media rows from an export JSON. Fully transactional - any bad row
-/// aborts the entire restore with a descriptive error.
+/**
+ * Restore media rows from an export JSON. The embedded SHA-256 checksum is
+ * verified (fail-closed) BEFORE any row is written; a mismatch rejects the
+ * whole backup with `CHECKSUM_MISMATCH`. Import itself is fully
+ * transactional - any bad row aborts the entire restore.
+ */
 #[tauri::command]
 pub async fn import_database_json(
     json_content: String,
@@ -494,6 +725,14 @@ pub async fn import_database_json(
 
     let repo = std::sync::Arc::clone(repo.inner());
     tauri::async_runtime::spawn_blocking(move || {
+        // Integrity gate: recompute the canonical checksum over the
+        // DESERIALIZED document and compare to the embedded digest.
+        if !crate::db::repository::verify_export_checksum(&parsed) {
+            return Err(
+                "CHECKSUM_MISMATCH: backup file integrity verification failed".to_string(),
+            );
+        }
+
         repo.import_media_transactional(&parsed.media)
             .map(|report| {
                 crate::logger::Logger::info(&format!(
@@ -575,12 +814,20 @@ fn validate_installer_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Download the update installer from an allow-listed GitHub release asset and
-/// spawn it. The filename is sanitized before it ever touches the filesystem.
+/**
+ * Download the update installer from an allow-listed GitHub release asset and
+ * spawn it. The filename is sanitized before it ever touches the filesystem.
+ *
+ * When `expected_sha256` is Some and non-empty (GitHub publishes asset
+ * digests), the SHA-256 is computed WHILE streaming and verified fail-closed
+ * BEFORE the installer is spawned; a mismatch deletes the temp file and
+ * aborts. None/empty skips verification (legacy behavior).
+ */
 #[tauri::command]
 pub async fn download_and_install_update(
     installer_url: String,
     filename: String,
+    expected_sha256: Option<String>,
     app_handle: AppHandle,
 ) -> Result<bool, String> {
     use tokio::io::AsyncWriteExt;
@@ -634,10 +881,14 @@ pub async fn download_and_install_update(
     let mut stream = response.bytes_stream();
     let start_time = std::time::Instant::now();
     let mut last_emit_time = std::time::Instant::now();
+    // Streamed hashing: digest is computed chunk-by-chunk while writing so
+    // verification never needs a second pass over the file.
+    let mut hasher = Sha256::new();
 
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
             Ok(chunk) => {
+                hasher.update(&chunk);
                 file.write_all(&chunk).await.map_err(|e| format!("Disk write error: {}", e))?;
                 downloaded_bytes += chunk.len() as u64;
                 let elapsed = start_time.elapsed().as_secs_f32().max(0.1);
@@ -664,6 +915,24 @@ pub async fn download_and_install_update(
     }
 
     file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
+
+    // Fail-closed checksum gate BEFORE spawning anything: a mismatched
+    // installer is deleted, never executed.
+    let expected_digest = expected_sha256
+        .as_deref()
+        .map(str::trim)
+        .filter(|digest| !digest.is_empty());
+    if let Some(expected) = expected_digest {
+        let actual = format!("{:x}", hasher.finalize());
+        if !actual.eq_ignore_ascii_case(expected) {
+            let _ = tokio::fs::remove_file(&target_path).await;
+            return Err(format!(
+                "UPDATE_CHECKSUM_MISMATCH: expected {} got {}",
+                expected, actual
+            ));
+        }
+        crate::logger::Logger::info("Update installer SHA-256 verification passed.");
+    }
 
     let _ = app_handle.emit("app_update_progress", serde_json::json!({
         "downloadedBytes": downloaded_bytes,

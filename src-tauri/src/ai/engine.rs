@@ -94,6 +94,9 @@ pub struct ModelVaultStatus {
 pub struct LocalAIEngine {
     vault_dir: Mutex<PathBuf>,
     active_model_id: Mutex<String>,
+    /// User-imported GGUF models (Wave-3), hydrated from app_settings on
+    /// demand. Empty until [`LocalAIEngine::set_custom_models`] is called.
+    custom_models: Mutex<Vec<ModelMetadata>>,
 }
 
 impl LocalAIEngine {
@@ -102,6 +105,7 @@ impl LocalAIEngine {
         Self {
             vault_dir: Mutex::new(base_vault_dir.as_ref().to_path_buf()),
             active_model_id: Mutex::new(default_model.id.clone()),
+            custom_models: Mutex::new(Vec::new()),
         }
     }
 
@@ -123,10 +127,44 @@ impl LocalAIEngine {
         get_supported_models()
     }
 
+    /**
+     * Replace the in-memory custom-model list (Wave-3 hydration). Callers
+     * load the persisted `customModels` settings array and convert it into
+     * full catalog metadata before invoking this.
+     */
+    pub fn set_custom_models(&self, models: Vec<ModelMetadata>) {
+        let mut customs = self
+            .custom_models
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *customs = models;
+    }
+
+    /**
+     * The catalog the rest of the app should see: static downloadables plus
+     * every user-imported custom GGUF. Custom entries run REAL inference and
+     * appear in vault status, but are never downloadable.
+     */
+    pub fn effective_catalog(&self) -> Vec<ModelMetadata> {
+        let mut catalog = get_supported_models();
+        let customs = self
+            .custom_models
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        catalog.extend(customs);
+        catalog
+    }
+
+    /// True when `model_id` exists in the static catalog OR the custom list.
+    pub fn is_known_model(&self, model_id: &str) -> bool {
+        self.effective_catalog().iter().any(|m| m.id == model_id)
+    }
+
     pub fn get_vault_status(&self) -> ModelVaultStatus {
         let vault_dir = self.get_vault_dir();
         let active_id = self.active_model_id.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
-        let supported = self.get_supported_models();
+        let supported = self.effective_catalog();
 
         let mut items = Vec::new();
         for meta in supported {
@@ -134,7 +172,9 @@ impl LocalAIEngine {
             let exists = model_file.exists();
             let is_active = meta.id == active_id;
 
-            let desc = if meta.id.contains("llama") {
+            let desc = if meta.id.starts_with("custom_") {
+                "User-imported GGUF model.".to_string()
+            } else if meta.id.contains("llama") {
                 "Ultra-fast, ultra-lightweight SLM engineered for fast narrative summaries and screenplay beat brainstorming under tight VRAM constraints.".to_string()
             } else {
                 "High-reasoning capacity small language model specialized for complex lore continuity checks, character tension analysis, and nuance.".to_string()
@@ -178,7 +218,9 @@ impl LocalAIEngine {
 
         // Catalog metadata for the ACTIVE model drives prompt format/context size.
         // Underscore-prefixed: unused when the real-inference feature is off.
-        let _meta = get_supported_models()
+        // Effective catalog so user-imported customs run REAL inference too.
+        let _meta = self
+            .effective_catalog()
             .into_iter()
             .find(|m| m.id == active_model_id);
 
@@ -203,7 +245,11 @@ impl LocalAIEngine {
                         &model_path,
                         &prompt,
                         context_len_u32,
-                        req.gpu_layers.unwrap_or(-1),
+                        // Defense-in-depth: 0 = CPU-only (never -1/offload-all).
+                        // Callers ALWAYS inject a telemetry-clamped count in
+                        // generate_ai_summary; this fallback must stay safe if
+                        // a future call site forgets.
+                        req.gpu_layers.unwrap_or(0),
                         req.temperature.unwrap_or(0.7),
                         req.max_tokens.unwrap_or(512).min(2048),
                         sink.as_ref(),

@@ -179,7 +179,9 @@ pub struct LoreNoteRecord {
 }
 
 /// Whole-vault backup document. The checksum is computed over the serialized
-/// document with `sha256_checksum` set to "" (see [`Repository::export_full_database`]).
+/// document with `sha256_checksum` set to "" (see
+/// [`Repository::export_full_database`]) and is verified on import via
+/// [`verify_export_checksum`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FullDatabaseExport {
@@ -366,9 +368,11 @@ impl Repository {
             .imdb_id
             .as_deref()
             .map(str::trim)
+            // Whitespace-only ids normalize to None (never stored as '').
+            .filter(|s| !s.is_empty())
             .map(|trimmed| trimmed.to_string());
 
-        if let Some(imdb_trimmed) = clean_imdb.as_deref().filter(|id| !id.is_empty()) {
+        if let Some(imdb_trimmed) = clean_imdb.as_deref() {
             if let Some(existing_id) = self.find_media_id_by_imdb(&conn, imdb_trimmed)? {
                 if existing_id != record.id {
                     return Err(rusqlite::Error::InvalidParameterName(format!(
@@ -595,7 +599,8 @@ impl Repository {
      * (`serde_json::to_string_pretty`) while `sha256Checksum` is the empty
      * string. The command layer saves exports via that same pretty
      * serializer, so external verifiers hashing the SAVED FILE bytes
-     * reproduce the embedded checksum exactly.
+     * reproduce the embedded checksum exactly. Import-side verification
+     * mirrors this via [`verify_export_checksum`].
      */
     pub fn export_full_database(&self) -> Result<FullDatabaseExport> {
         let media = self.get_all_media()?;
@@ -677,11 +682,13 @@ impl Repository {
                 let directors_json =
                     serde_json::to_string(&record.directors).unwrap_or_else(|_| "[]".to_string());
                 // Same storage normalization as insert_media: bind the
-                // TRIMMED imdb id so imports never persist padded values.
+                // TRIMMED imdb id so imports never persist padded values;
+                // whitespace-only ids normalize to None.
                 let clean_imdb: Option<String> = record
                     .imdb_id
                     .as_deref()
                     .map(str::trim)
+                    .filter(|s| !s.is_empty())
                     .map(|trimmed| trimmed.to_string());
 
                 let result = stmt.execute(params![
@@ -738,6 +745,27 @@ impl Repository {
             first_error: None,
         })
     }
+}
+
+/**
+ * Verify the embedded SHA-256 of a parsed export document (import-side
+ * integrity gate, used by the `import_database_json` command).
+ *
+ * Canonicalization contract - identical to [`Repository::export_full_database`]:
+ * SHA-256 over the PRETTY-serialized document with `sha256Checksum` blanked.
+ * Hashing is done over the DESERIALIZED struct re-canonicalized by serde
+ * (field order fixed by the struct definition), so key-order churn from an
+ * external JSON envelope can never break verification.
+ */
+pub(crate) fn verify_export_checksum(document: &FullDatabaseExport) -> bool {
+    let mut replica = document.clone();
+    replica.sha256_checksum = String::new();
+    let Ok(canonical) = serde_json::to_string_pretty(&replica) else {
+        return false;
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    format!("{:x}", hasher.finalize()).eq_ignore_ascii_case(&document.sha256_checksum)
 }
 
 /// Current UTC time as ISO-8601 with millisecond precision.
@@ -981,6 +1009,34 @@ mod tests {
         assert_eq!(
             recomputed, export.sha256_checksum,
             "external verifiers must be able to reproduce the checksum"
+        );
+
+        drop(repo);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn import_rejects_tampered_checksum() {
+        let (repo, path) = temp_repo();
+
+        repo.insert_media(&sample_record("t1", Some("tt3333333"), "Untampered", "2026-01-01T00:00:00.000Z"))
+            .unwrap();
+        let export = repo.export_full_database().unwrap();
+
+        // Untouched document verifies against its own embedded digest.
+        assert!(
+            verify_export_checksum(&export),
+            "untouched export must pass checksum verification"
+        );
+
+        // Flipping ONE title changes the canonical bytes -> mismatch.
+        let mut tampered = export.clone();
+        if let Some(first) = tampered.media.first_mut() {
+            first.title = "Tampered Title".to_string();
+        }
+        assert!(
+            !verify_export_checksum(&tampered),
+            "tampered export must fail checksum verification"
         );
 
         drop(repo);

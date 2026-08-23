@@ -293,7 +293,7 @@ export const MediaCard = memo<MediaCardProps>(({
               marginTop: '2px',
             }}
           >
-            {media.year && <span>{media.year}</span>}
+            {Boolean(media.year) && <span>{media.year}</span>}
             {media.runtimeMinutes && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
                 <span>🎬</span>

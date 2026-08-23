@@ -110,6 +110,13 @@ export const api = {
   getModelVaultStatus: () => tauriInvoke<ModelVaultStatus>('get_model_vault_status'),
   setActiveAiModel: (modelId: string) => tauriInvoke<boolean>('set_active_ai_model', { modelId }),
   downloadAiModel: (modelId: string) => tauriInvoke<string>('download_ai_model', { modelId }),
+  /**
+   * Register a user-picked local .gguf file into the persistent backend
+   * catalog. Returns the persisted ModelStatusItem (id prefixed `custom_`,
+   * isInstalled true); it appears in every subsequent getModelVaultStatus().
+   */
+  importCustomModel: (sourcePath: string, displayName: string) =>
+    tauriInvoke<import('../types').ModelStatusItem>('import_custom_model', { sourcePath, displayName }),
   generateAISummary: (params: InferenceParams) =>
     // The whole object rides as the `request` argument (InferenceRequest struct).
     tauriInvoke<InferenceResult>('generate_ai_summary', { request: params }),
@@ -148,7 +155,7 @@ export const api = {
         body?: string | null;
         published_at?: string | null;
         html_url?: string;
-        assets?: Array<{ name?: string; size?: number; browser_download_url?: string }>;
+        assets?: Array<{ name?: string; size?: number; browser_download_url?: string; digest?: string }>;
       }> = await response.json();
 
       if (!Array.isArray(releases) || releases.length === 0) {
@@ -179,6 +186,8 @@ export const api = {
         name: a.name ?? '',
         size: a.size ?? 0,
         browserDownloadUrl: a.browser_download_url ?? '',
+        // GitHub API sha256 digest ("sha256:..."); absent on older releases.
+        digest: a.digest ?? '',
       }));
       const candidateTag = (candidate.tag_name || '').replace(/^v/, '');
       const hasExe = assets.some((a) => a.name.toLowerCase().endsWith('.exe'));
@@ -201,8 +210,12 @@ export const api = {
     }
   },
 
-  downloadAndInstallUpdate: (installerUrl: string, filename: string) =>
-    tauriInvoke<boolean>('download_and_install_update', { installerUrl, filename }),
+  /**
+   * Download and hand off to the release installer. When `expectedSha256` is
+   * provided the backend verifies the downloaded file fail-closed before launch.
+   */
+  downloadAndInstallUpdate: (installerUrl: string, filename: string, expectedSha256?: string) =>
+    tauriInvoke<boolean>('download_and_install_update', { installerUrl, filename, expectedSha256 }),
 
   // ── Window controls (native frameless chrome) ────────────────────────────
   minimizeWindow: () => tauriInvoke<void>('app_minimize'),

@@ -29,9 +29,10 @@ use crate::logger::Logger;
 
 /// Filenames with a download currently running. Poison-tolerant lock:
 /// a panicking callback must never wedge every future download.
-/// Registration/unregistration happens ONLY in the thin
-/// [`ModelDownloader::download_gguf_model`] wrapper, so every exit path of
-/// [`ModelDownloader::download_gguf_model_inner`] is covered by construction.
+/// Registration/unregistration happens ONLY via [`InFlightGuard`], whose
+/// Drop covers every exit path of
+/// [`ModelDownloader::download_gguf_model_inner`] by construction -
+/// returns, errors, panic unwinds, and cancelled futures included.
 ///
 /// OnceLock indirection: `HashSet::new()` is not a `const fn` on stable Rust,
 /// so the set cannot live directly inside a `static Mutex`.
@@ -40,6 +41,37 @@ static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 /// Lazily-initialized access to the in-flight download registry.
 fn in_flight_registry() -> &'static Mutex<HashSet<String>> {
     IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/**
+ * RAII registration in [`IN_FLIGHT`]: inserts `filename` on creation and
+ * removes it on Drop. Because the guard is an ordinary local held across the
+ * download awaits, ANY exit of the wrapper future - success, every Err
+ * branch, retry exhaustion, a panicking callback, or the future simply being
+ * cancelled at an await point - still runs the unregister.
+ */
+struct InFlightGuard(String);
+
+impl InFlightGuard {
+    /// Insert `filename` into the registry; None when already in flight
+    /// (the caller must then reject with DOWNLOAD_IN_PROGRESS).
+    fn register(filename: &str) -> Option<Self> {
+        let mut in_flight = in_flight_registry()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        in_flight
+            .insert(filename.to_string())
+            .then(|| Self(filename.to_string()))
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        let mut in_flight = in_flight_registry()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        in_flight.remove(self.0.as_str());
+    }
 }
 
 /// Progress payload emitted through the `model_download_progress` event.
@@ -106,11 +138,11 @@ impl ModelDownloader {
     /// against `expected_sha256`. Returns the final verified path.
     ///
     /// Thin concurrency guard around
-    /// [`ModelDownloader::download_gguf_model_inner`]: registers `filename`
-    /// in [`IN_FLIGHT`] BEFORE any work starts, then unconditionally removes
-    /// it once the inner future resolves - success, every Err branch, and
-    /// retry exhaustion are all covered because removal happens at this
-    /// single point after `.await`. A concurrent duplicate call is rejected
+    /// [`ModelDownloader::download_gguf_model_inner`]: constructs an
+    /// [`InFlightGuard`] right after the duplicate check; the guard then
+    /// lives for the whole function and unregisters on Drop, covering
+    /// success, every Err branch, retry exhaustion, and cancellation of the
+    /// future at any await point. A concurrent duplicate call is rejected
     /// up front with `DOWNLOAD_IN_PROGRESS`.
     pub async fn download_gguf_model<F>(
         download_url: &str,
@@ -122,31 +154,19 @@ impl ModelDownloader {
     where
         F: Fn(DownloadProgress) + Send + Sync + 'static,
     {
-        {
-            let mut in_flight = in_flight_registry()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if !in_flight.insert(filename.to_string()) {
-                return Err(format!("DOWNLOAD_IN_PROGRESS: {filename}"));
-            }
-        } // Registry lock dropped before the long transfer; re-taken only to unregister.
+        let _in_flight = match InFlightGuard::register(filename) {
+            Some(guard) => guard,
+            None => return Err(format!("DOWNLOAD_IN_PROGRESS: {filename}")),
+        };
 
-        let outcome = Self::download_gguf_model_inner(
+        Self::download_gguf_model_inner(
             download_url,
             dest_dir,
             filename,
             expected_sha256,
             progress_callback,
         )
-        .await;
-
-        // Single exit funnel: whatever inner returned, this filename is no
-        // longer downloading.
-        let mut in_flight = in_flight_registry()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        in_flight.remove(filename);
-        outcome
+        .await
     }
 
     /// The full download pipeline previously living in

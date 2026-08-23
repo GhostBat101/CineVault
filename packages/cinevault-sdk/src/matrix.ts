@@ -60,19 +60,35 @@ export class CharacterTensionEngine {
     };
   }
 
+  /**
+   * Stable graph-node key for a relationship endpoint: the registered
+   * character's id when present, falling back to its display name (legacy data
+   * may lack ids). Unregistered endpoints degrade to the raw relationship id.
+   */
+  private nodeKeyFor(characterId: string): string {
+    const char = this.characters.get(characterId);
+    if (!char) return characterId;
+    return char.id || char.name;
+  }
+
+  /**
+   * Export the tension graph keyed by NODE ID (name fallback) so two cast
+   * members sharing a display name never collide into one merged node.
+   */
   public exportAdjacencyList(): Record<string, Array<{ target: string; dynamic: string; tension: number }>> {
     const list: Record<string, Array<{ target: string; dynamic: string; tension: number }>> = {};
 
     for (const [id, char] of this.characters.entries()) {
-      list[char.name] = [];
+      const nodeKey = char.id || char.name;
+      list[nodeKey] = [];
       for (const rel of this.relationships) {
-        if (rel.sourceCharacterId === id) {
-          const targetName = this.characters.get(rel.targetCharacterId)?.name || rel.targetCharacterId;
-          list[char.name].push({ target: targetName, dynamic: rel.relationshipType, tension: rel.tensionScore });
-        } else if (rel.targetCharacterId === id) {
-          const targetName = this.characters.get(rel.sourceCharacterId)?.name || rel.sourceCharacterId;
-          list[char.name].push({ target: targetName, dynamic: rel.relationshipType, tension: rel.tensionScore });
-        }
+        if (rel.sourceCharacterId !== id && rel.targetCharacterId !== id) continue;
+        const otherId = rel.sourceCharacterId === id ? rel.targetCharacterId : rel.sourceCharacterId;
+        list[nodeKey].push({
+          target: this.nodeKeyFor(otherId),
+          dynamic: rel.relationshipType,
+          tension: rel.tensionScore,
+        });
       }
     }
 

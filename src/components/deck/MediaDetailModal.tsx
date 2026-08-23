@@ -208,6 +208,20 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     }
     try {
       await api.deleteMedia(media.id);
+
+      // Purge orphaned Director Suite localStorage rows (characters_ /
+      // relationships_ / lore_notes_ / beats_) that belong ONLY to this title;
+      // the backend delete cannot reach them.
+      const suffix = `_${media.id}`;
+      const doomed: string[] = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('cinevault_') && key.endsWith(suffix)) {
+          doomed.push(key);
+        }
+      }
+      doomed.forEach((key) => localStorage.removeItem(key));
+
       onMediaDeleted?.(media.id);
     } catch (err) {
       console.error('[Delete Media Error]', err);

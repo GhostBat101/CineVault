@@ -54,6 +54,14 @@ import { X } from 'lucide-react';
 const openModalStack: Array<() => void> = [];
 
 /**
+ * Body overflow captured BEFORE the first modal locks scrolling. Kept at module
+ * level (instead of per-instance closures) so nested dialogs that unmount out
+ * of order still restore the TRUE page baseline when the last one closes - a
+ * per-instance restore would clobber it with another modal's 'hidden'.
+ */
+let bodyOverflowBaseline: string | null = null;
+
+/**
  * Selector used by the Tab focus-trap to enumerate focusable descendants
  * of the dialog panel.
  */
@@ -116,8 +124,12 @@ closableRef.current = closable;
         : null;
 
     // --- Body scroll lock ---------------------------------------------------
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    // Capture the page baseline only when this is the FIRST modal in the
+    // stack; nested modals must not overwrite it with 'hidden'.
+    if (openModalStack.length === 0) {
+      bodyOverflowBaseline = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
 
     // --- Nested-modal registry ---------------------------------------------
     const requestClose = () => onCloseRef.current();
@@ -156,11 +168,12 @@ closableRef.current = closable;
       const index = openModalStack.indexOf(requestClose);
       if (index !== -1) openModalStack.splice(index, 1);
 
-      // SCROLL-LOCK REFCOUNT: restore the prior page overflow ONLY when this
-      // was the last open modal. Nested dialogs closing out of order must not
-      // lift the lock while a parent dialog still needs it.
-      if (openModalStack.length === 0) {
-        document.body.style.overflow = previousOverflow;
+      // SCROLL-LOCK REFCOUNT: restore the captured page baseline ONLY when
+      // this was the last open modal. Nested dialogs closing out of order
+      // must not lift the lock while a parent dialog still needs it.
+      if (openModalStack.length === 0 && bodyOverflowBaseline !== null) {
+        document.body.style.overflow = bodyOverflowBaseline;
+        bodyOverflowBaseline = null;
       }
 
       // Return focus to whatever held it before the dialog opened.

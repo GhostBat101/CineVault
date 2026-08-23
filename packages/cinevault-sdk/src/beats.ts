@@ -29,6 +29,42 @@ export const THREE_ACT_BEATS: BeatTemplate[] = [
   { name: 'Resolution', act: 'Act 3', targetPercentage: 100, description: 'Denouement and restoration of balance.' },
 ];
 
+/**
+ * Dan Harmon's Story Circle (8 steps across 3 acts). The protagonist descends
+ * into the unfamiliar (Go/Search/Find), pays a price (Take), and returns
+ * changed (Return/Change) - the loop closes where it opened, but transformed.
+ */
+export const DAN_HARMON_BEATS: BeatTemplate[] = [
+  { name: 'You', act: 'Act 1', targetPercentage: 0, description: 'A character exists in their zone of comfort; the status quo is established.' },
+  { name: 'Need', act: 'Act 1', targetPercentage: 12, description: 'Something unsettles the comfort zone; the character wants or needs something.' },
+  { name: 'Go', act: 'Act 2', targetPercentage: 25, description: 'The character crosses into the unfamiliar situation, committing to change.' },
+  { name: 'Search', act: 'Act 2', targetPercentage: 37, description: 'Adapting to the unfamiliar world; trials reveal what the character lacks.' },
+  { name: 'Find', act: 'Act 2', targetPercentage: 50, description: 'The character gets what they wanted - at a cost they did not expect.' },
+  { name: 'Take', act: 'Act 3', targetPercentage: 62, description: 'The price is paid; the character loses what mattered most to gain their goal.' },
+  { name: 'Return', act: 'Act 3', targetPercentage: 87, description: 'The character returns to the familiar situation, forever changed by the journey.' },
+  { name: 'Change', act: 'Act 3', targetPercentage: 100, description: 'The transformation is proven; the character - and their world - is new.' },
+];
+
+/**
+ * The Hero's Journey (Campbell/Vogler, 12 stages). Act 1 leaves home,
+ * Act 2 descends into the special world through the Ordeal, Act 3 returns
+ * bearing the elixir.
+ */
+export const HEROES_JOURNEY_BEATS: BeatTemplate[] = [
+  { name: 'Ordinary World', act: 'Act 1', targetPercentage: 8, description: 'The hero\'s normal life and inner flaw are established before the adventure.' },
+  { name: 'Call to Adventure', act: 'Act 1', targetPercentage: 17, description: 'A challenge or invitation disrupts the ordinary world.' },
+  { name: 'Refusal of the Call', act: 'Act 1', targetPercentage: 25, description: 'The hero hesitates, revealing fears and the stakes of leaving.' },
+  { name: 'Meeting the Mentor', act: 'Act 1', targetPercentage: 33, description: 'A guide grants the confidence, training, or gift needed to begin.' },
+  { name: 'Crossing the Threshold', act: 'Act 2', targetPercentage: 42, description: 'The hero commits to the special world; no turning back.' },
+  { name: 'Tests, Allies & Enemies', act: 'Act 2', targetPercentage: 50, description: 'The rules of the new world are learned through trials and alliances.' },
+  { name: 'Approach to the Inmost Cave', act: 'Act 2', targetPercentage: 58, description: 'Preparation for the central ordeal; tension peaks before the descent.' },
+  { name: 'The Ordeal', act: 'Act 2', targetPercentage: 67, description: 'The hero faces death or greatest fear and is reborn stronger.' },
+  { name: 'Reward (Seizing the Sword)', act: 'Act 2', targetPercentage: 75, description: 'The prize of survival is claimed - but danger lingers.' },
+  { name: 'The Road Back', act: 'Act 3', targetPercentage: 83, description: 'The chase back to the ordinary world; consequences pursue the hero.' },
+  { name: 'Resurrection', act: 'Act 3', targetPercentage: 92, description: 'The final test purifies the hero; the true climax of transformation.' },
+  { name: 'Return with the Elixir', act: 'Act 3', targetPercentage: 100, description: 'The hero returns home bearing something that restores the world.' },
+];
+
 export class BeatSheetEngine {
   public framework: BeatSheetFramework;
   private userBeats: Map<string, string> = new Map();
@@ -40,6 +76,8 @@ export class BeatSheetEngine {
   public getTemplates(): BeatTemplate[] {
     switch (this.framework) {
       case 'three-act': return THREE_ACT_BEATS;
+      case 'dan-harmon': return DAN_HARMON_BEATS;
+      case 'heros-journey': return HEROES_JOURNEY_BEATS;
       default: return SAVE_THE_CAT_BEATS;
     }
   }

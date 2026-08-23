@@ -96,6 +96,10 @@ export const ModelVaultView: React.FC = () => {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [customPath, setCustomPath] = useState('');
   const [customName, setCustomName] = useState('');
+  /** True while the native .gguf file dialog is open (prevents double-pick). */
+  const [isPickingGguf, setIsPickingGguf] = useState(false);
+  /** True while the backend persists the picked file into the vault catalog. */
+  const [isImporting, setIsImporting] = useState(false);
 
   // Active model for the hero card. Only an entry the BACKEND flags active
   // qualifies - falling back to models[0] would mislabel an inactive model.
@@ -159,26 +163,52 @@ export const ModelVaultView: React.FC = () => {
     }
   };
 
-  const handleImportCustom = () => {
-    if (!customName.trim()) return;
-    const customItem: ModelStatusItem = {
-      id: `custom_${Date.now()}`,
-      name: customName,
-      parameterSize: 'Custom',
-      quantization: 'GGUF',
-      fileSizeMb: 1200,
-      description: `User-imported local model located at: ${customPath || 'custom_model.gguf'}`,
-      filename: customPath || 'custom_model.gguf',
-      isInstalled: true,
-      isActive: false,
-      localPath: customPath,
-      downloadUrl: '',
-      sha256: 'custom_user_provided',
-    };
-    setModels((prev) => [...prev, customItem]);
-    setCustomName('');
-    setCustomPath('');
-    setIsImportModalOpen(false);
+  /**
+   * Open the native .gguf picker (same dialog plugin pattern as IngestModal's
+   * poster flow). The picked ABSOLUTE path is required - the backend copies/
+   * registers the real file, so a hand-typed guess must never be accepted.
+   */
+  const handleChooseGgufFile = async () => {
+    if (!isTauri() || isPickingGguf) return;
+    setIsPickingGguf(true);
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const picked = await open({
+        multiple: false,
+        filters: [{ name: 'GGUF Model', extensions: ['gguf'] }],
+      });
+      if (typeof picked === 'string') {
+        setCustomPath(picked);
+      }
+    } catch (err) {
+      console.error('[GGUF Picker Error]', err);
+      toast.error(err instanceof Error ? err.message : String(err), 'File picker failed');
+    } finally {
+      setIsPickingGguf(false);
+    }
+  };
+
+  /**
+   * Persist the picked .gguf through the backend catalog (import_custom_model).
+   * Success closes the modal and refreshes from getModelVaultStatus() - the
+   * backend now owns the entry; nothing is fabricated client-side.
+   */
+  const handleImportCustom = async () => {
+    if (!customName.trim() || !customPath.trim() || isImporting) return;
+    setIsImporting(true);
+    try {
+      await api.importCustomModel(customPath.trim(), customName.trim());
+      setIsImportModalOpen(false);
+      setCustomName('');
+      setCustomPath('');
+      toast.success('Model imported');
+      await fetchVaultStatus();
+    } catch (err) {
+      console.error('[Custom Model Import Error]', err);
+      toast.error(err instanceof Error ? err.message : String(err), 'Import failed');
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   return (
@@ -393,24 +423,6 @@ export const ModelVaultView: React.FC = () => {
                         INSTALLED
                       </span>
                     ) : null}
-
-                    {/* Session-only marker for locally mounted GGUFs that the
-                        backend catalog does not know about (cannot activate). */}
-                    {model.id.startsWith('custom_') && (
-                      <span
-                        title="Session-only import: persistent registration requires backend catalog support"
-                        style={{
-                          fontSize: '10px',
-                          fontWeight: 700,
-                          padding: '2px 8px',
-                          borderRadius: 'var(--radius-full)',
-                          backgroundColor: 'var(--accent-subtle)',
-                          color: 'var(--text-muted)',
-                        }}
-                      >
-                        SESSION-ONLY
-                      </span>
-                    )}
                   </div>
 
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
@@ -507,7 +519,7 @@ export const ModelVaultView: React.FC = () => {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         title="Import Custom GGUF Model"
-        subtitle="Registers a local .gguf for THIS SESSION only - persistent import arrives with backend catalog support"
+        subtitle="Registers a local .gguf file into your persistent model vault catalog"
         maxWidth="500px"
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -534,24 +546,39 @@ export const ModelVaultView: React.FC = () => {
 
           <div>
             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-              Absolute File Path to .gguf
+              Model File (.gguf)
             </label>
-            <input
-              type="text"
-              value={customPath}
-              onChange={(e) => setCustomPath(e.target.value)}
-              placeholder="D:\AI_Models\custom_model.gguf"
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                backgroundColor: 'var(--bg-tertiary)',
-                border: '1px solid var(--border-medium)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-primary)',
-                fontSize: '13px',
-                fontFamily: 'var(--font-mono)',
-              }}
-            />
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch' }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<FolderOpen size={14} />}
+                isLoading={isPickingGguf}
+                onClick={handleChooseGgufFile}
+                style={{ flexShrink: 0 }}
+              >
+                Choose .gguf File...
+              </Button>
+              <input
+                type="text"
+                value={customPath}
+                placeholder="D:\AI_Models\custom_model.gguf"
+                readOnly
+                aria-label="Selected .gguf file path"
+                title={customPath || 'No file selected yet'}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  backgroundColor: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-medium)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: 'var(--text-primary)',
+                  fontSize: '13px',
+                  fontFamily: 'var(--font-mono)',
+                  minWidth: 0,
+                }}
+              />
+            </div>
           </div>
 
           <div
@@ -575,9 +602,10 @@ export const ModelVaultView: React.FC = () => {
           <Button
             variant="primary"
             onClick={handleImportCustom}
-            disabled={!customName.trim()}
+            disabled={!customName.trim() || !customPath.trim() || isImporting}
+            isLoading={isImporting}
           >
-            Mount Custom GGUF
+            Import Custom GGUF
           </Button>
         </div>
       </Modal>

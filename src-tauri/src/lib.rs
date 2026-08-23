@@ -80,10 +80,24 @@ pub fn run() {
             ));
 
             // 2. Database
+            // DB failures abort boot through the returned Err (Tauri supports
+            // Err from setup) with clear user-facing text instead of a panic.
             let db_path = base_dir.join("cinevault.db");
             logger::Logger::info(&format!("Initializing SQLite Database at {:?}", db_path));
-            let repo = db::repository::Repository::new(&db_path).expect("Failed to initialize database");
-            repo.run_migrations().expect("Failed to run database migrations");
+            let repo = db::repository::Repository::new(&db_path).map_err(|e| {
+                format!(
+                    "CineVault could not open its database at {:?}: {}. \
+                     Check that the folder is writable and no other instance is running.",
+                    db_path, e
+                )
+            })?;
+            repo.run_migrations().map_err(|e| {
+                format!(
+                    "CineVault could not prepare its database schema: {}. \
+                     Check disk space and folder permissions, then restart.",
+                    e
+                )
+            })?;
             // Arc-managed: DB commands clone this handle into spawn_blocking workers.
             app.manage(std::sync::Arc::new(repo));
 
@@ -112,6 +126,7 @@ pub fn run() {
             commands::get_model_vault_status,
             commands::set_active_ai_model,
             commands::download_ai_model,
+            commands::import_custom_model,
             commands::save_media_entry,
             commands::get_all_media,
             commands::delete_media_entry,

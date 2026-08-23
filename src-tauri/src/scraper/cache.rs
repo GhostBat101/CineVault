@@ -84,6 +84,13 @@ impl AssetCacheManager {
             .await
             .map_err(|e| format!("Failed to write cache file: {}", e))?;
 
+        // Flush before returning: the URL-keyed existence fast path trusts
+        // this file on the next call, so buffered bytes must already have
+        // reached the OS - not just the writer's userspace buffer.
+        file.flush()
+            .await
+            .map_err(|e| format!("Failed to flush cache file: {}", e))?;
+
         Ok(file_path.to_string_lossy().to_string())
     }
 

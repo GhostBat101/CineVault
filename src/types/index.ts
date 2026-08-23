@@ -234,6 +234,8 @@ export interface AppUpdateAsset {
   name: string;
   size: number;
   browserDownloadUrl: string;
+  /** GitHub release sha256 digest ("sha256:..."), empty when the release omits it. */
+  digest?: string;
 }
 
 export interface AppUpdateInfo {
