@@ -1,17 +1,17 @@
-//! ai/mod.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! ai/mod.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: AI subsystem root. Wires together the model catalog, prompt builders,
-//!       the GGUF downloader, and the inference engine.
+//!   the GGUF downloader, and the inference engine.
 //!
 //! MODULES:
 //!   models      - curated GGUF catalog metadata (Llama 3.2 1B / Qwen 2.5 1.5B).
 //!   prompts     - (legacy) prompt text builders.
 //!   downloader  - resilient SHA-verified model downloader.
 //!   engine      - LocalAIEngine facade: dispatches real vs template inference
-//!                 and owns vault/active-model state.
+//!   and owns vault/active-model state.
 //!   llama_engine- REAL token generation via llama-cpp-2. Only compiled when
-//!                 the `real-inference` feature is enabled; without it the
-//!                 crate stays dependency-free and compiles everywhere.
+//!   the `real-inference` feature is enabled; without it the
+//!   crate stays dependency-free and compiles everywhere.
 
 pub mod models;
 pub mod prompts;

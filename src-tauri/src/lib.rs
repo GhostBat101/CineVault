@@ -1,19 +1,19 @@
-//! src-tauri/src/lib.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! src-tauri/src/lib.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: Application entry point. Boots the Tauri v2 host: portable-mode
-//!       directory resolution, logger init, SQLite repository init,
-//!       telemetry monitor and local AI engine construction, then wires
-//!       every command into the invoke handler.
+//!   directory resolution, logger init, SQLite repository init,
+//!   telemetry monitor and local AI engine construction, then wires
+//!   every command into the invoke handler.
 //!
 //! DESIGN NOTES:
 //!   - PORTABLE MODE: everything (logs, DB, models) lives next to the
-//!     executable rather than %APPDATA%, so the app runs from any folder.
+//!   executable rather than %APPDATA%, so the app runs from any folder.
 //!   - The [`db::repository::Repository`] is managed as an `std::sync::Arc`
-//!     so blocking SQLite calls can be cloned into
-//!     `tauri::async_runtime::spawn_blocking` workers without holding a
-//!     `State<'_>` borrow across an await point.
+//!   so blocking SQLite calls can be cloned into
+//!   `tauri::async_runtime::spawn_blocking` workers without holding a
+//!   `State<'_>` borrow across an await point.
 //!   - Schema creation/migration happens exactly once here via
-//!     `Repository::run_migrations` (PRAGMA user_version driven).
+//!   `Repository::run_migrations` (PRAGMA user_version driven).
 //!
 //! USES:    db::repository, telemetry::hardware, ai::engine, commands, logger.
 //! USED BY: src-tauri/src/main.rs (calls cinevault_lib::run()).

@@ -1,19 +1,19 @@
-//! ai/llama_engine.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! ai/llama_engine.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: Genuine GGUF token generation using llama.cpp bindings (crate
-//!       `llama-cpp-2`). COMPILED ONLY under `--features real-inference`;
-//!       without that feature this entire module does not exist and
-//!       [`super::engine::LocalAIEngine`] falls back to template analysis.
+//!   `llama-cpp-2`). COMPILED ONLY under `--features real-inference`;
+//!   without that feature this entire module does not exist and
+//!   [`super::engine::LocalAIEngine`] falls back to template analysis.
 //!
 //! DESIGN:
 //!   - The llama.cpp backend is a process-global singleton (`OnceLock`).
 //!   - Loaded models are CACHED by absolute path (first generation pays model
-//!     load cost ~seconds; subsequent calls reuse weights).
+//!   load cost ~seconds; subsequent calls reuse weights).
 //!   - GPU offload: request.gpuLayers drives LlamaModelParams; 0 = CPU-only,
-//!     negative = offload everything safe for our <2GB VRAM budget.
+//!   negative = offload everything safe for our <2GB VRAM budget.
 //!   - Generation loop: prompt batch decode -> incremental single-token
-//!     batches, invoking the caller's token sink per piece so the UI can
-//!     stream output live via the `ai:token` event.
+//!   batches, invoking the caller's token sink per piece so the UI can
+//!   stream output live via the `ai:token` event.
 //!
 //! API-DRIFT NOTE: llama-cpp-2 tracks upstream llama.cpp closely. This file
 //! targets the 0.1 series (chain_simple sampler + token_to_str + is_eog_token).
@@ -82,7 +82,7 @@ pub fn generate_with_model(
     let start_time = std::time::Instant::now();
     let backend = backend()?;
 
-    // ── Model load (cached across requests) ──────────────────────────────
+    // â”€â”€ Model load (cached across requests) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let needs_reload = {
         let guard = loaded_model();
         match guard.as_ref() {
@@ -116,7 +116,7 @@ pub fn generate_with_model(
         }
     };
 
-    // ── Context creation (cheap; per-request) ────────────────────────────
+    // â”€â”€ Context creation (cheap; per-request) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Context size rides inside the params struct (positional n_ctx removed
     // in the 0.1 series).
     let ctx_size = context_len.min(model.n_ctx_train());
@@ -126,7 +126,7 @@ pub fn generate_with_model(
         .new_context(backend, ctx_params)
         .map_err(|e| format!("Failed to create inference context: {}", e))?;
 
-    // ── Tokenize prompt ──────────────────────────────────────────────────
+    // â”€â”€ Tokenize prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let tokens = model
         .str_to_token(prompt, AddBos::Always)
         .map_err(|e| format!("Tokenization failed: {}", e))?;
@@ -145,13 +145,13 @@ pub fn generate_with_model(
     }
     ctx.decode(&mut batch).map_err(|e| format!("Prefill decode failed: {}", e))?;
 
-    // ── Sampling chain: temperature -> distribution pick ────────────────
+    // â”€â”€ Sampling chain: temperature -> distribution pick â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let mut sampler = LlamaSampler::chain_simple([
         LlamaSampler::temp(temperature.clamp(0.05, 1.5)),
         LlamaSampler::dist(42), // deterministic-ish seed; quality fine for summaries
     ]);
 
-    // ── Incremental generation loop ──────────────────────────────────────
+    // â”€â”€ Incremental generation loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let mut generated_text = String::new();
     let mut generated_count: usize = 0;
     let mut n_cur = prompt_len;

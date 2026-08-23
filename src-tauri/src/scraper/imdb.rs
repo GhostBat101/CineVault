@@ -1,22 +1,22 @@
-//! scraper/imdb.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! scraper/imdb.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: IMDb metadata extraction. [`ImdbScraper::scrape_url`] resolves a
-//!       title from a user-supplied URL or bare id, parses schema.org
-//!       JSON-LD first, falls back to DOM scraping, then to IMDb's public
-//!       suggestion API, enriching synopses via Wikipedia.
+//!   title from a user-supplied URL or bare id, parses schema.org
+//!   JSON-LD first, falls back to DOM scraping, then to IMDb's public
+//!   suggestion API, enriching synopses via Wikipedia.
 //!
 //! DESIGN NOTES:
 //!   - The whole flow is wrapped in a [`SCRAPE_TIMEOUT_SECS`] budget so a
-//!     hung network can never wedge the command forever.
+//!   hung network can never wedge the command forever.
 //!   - ID extraction is a strict hand-rolled scanner (the crate has NO
-//!     `regex` dependency): it only accepts `tt` followed by 7..=10 ASCII
-//!     digits, not glued into a longer token, anywhere in the input.
+//!   `regex` dependency): it only accepts `tt` followed by 7..=10 ASCII
+//!   digits, not glued into a longer token, anywhere in the input.
 //!   - `poster_local_path` is populated by the caller (commands/mod.rs)
-//!     after best-effort local caching; this module always leaves it None.
+//!   after best-effort local caching; this module always leaves it None.
 //!
 //! USES:    reqwest, scraper (DOM), serde_json, tokio (timeout), urlencoding.
 //! USED BY: src-tauri/src/commands/mod.rs (`extract_imdb`),
-//!          src/types/index.ts mirrors ScrapedMedia as its TS contract.
+//!   src/types/index.ts mirrors ScrapedMedia as its TS contract.
 
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT, ACCEPT, ACCEPT_LANGUAGE};
 use scraper::{Html, Selector};
@@ -441,7 +441,7 @@ impl ImdbScraper {
     }
 }
 
-// ── TESTS ───────────────────────────────────────────────────────────────────
+// â”€â”€ TESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Contract for ID extraction: bare IDs, full URLs, surrounding punctuation,
 // and the 7-10 digit validity window. Junk input must yield None, never a
 // partial or fabricated ID (a wrong ID silently ingests the wrong movie).
@@ -499,7 +499,7 @@ mod tests {
     }
 }
 
-// ── Regression tests for audit BUG-HIGH-01 / BUG-MED-02 / BUG-MED-03 ───────
+// â”€â”€ Regression tests for audit BUG-HIGH-01 / BUG-MED-02 / BUG-MED-03 â”€â”€â”€â”€â”€â”€â”€
 
 #[cfg(test)]
 mod duration_tests {

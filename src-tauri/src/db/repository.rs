@@ -1,36 +1,36 @@
-//! db/repository.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! db/repository.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: SQLite persistence layer. Owns the `media` and `app_settings`
-//!       tables, provides CRUD + upsert semantics, full-database JSON
-//!       export/import, reproducible integrity checksums, and schema
-//!       migrations driven by `PRAGMA user_version`.
+//!   tables, provides CRUD + upsert semantics, full-database JSON
+//!   export/import, reproducible integrity checksums, and schema
+//!   migrations driven by `PRAGMA user_version`.
 //!
 //! DESIGN NOTES:
 //!   - [`Repository::run_migrations`] is the ONE migration entry point.
-//!     The applied schema version is stored in SQLite's built-in
-//!     `user_version` pragma; new migrations are added as ascending match
-//!     arms (`v if v < 2 => ...` and so on) so upgrades apply in order.
-//!     Migration 1 additionally attempts a UNIQUE partial index on
-//!     media(imdb_id); if legacy duplicate rows block it, boot continues
-//!     with a logged warning (application-level dedupe still guards writes).
+//!   The applied schema version is stored in SQLite's built-in
+//!   `user_version` pragma; new migrations are added as ascending match
+//!   arms (`v if v < 2 => ...` and so on) so upgrades apply in order.
+//!   Migration 1 additionally attempts a UNIQUE partial index on
+//!   media(imdb_id); if legacy duplicate rows block it, boot continues
+//!   with a logged warning (application-level dedupe still guards writes).
 //!   - All timestamps are ISO-8601 UTC strings produced by [`iso_utc_now`]
-//!     (no external chrono dependency; frontend writes the same format).
+//!   (no external chrono dependency; frontend writes the same format).
 //!   - Writes use explicit `INSERT ... ON CONFLICT(id) DO UPDATE` upserts -
-//!     NOT `INSERT OR REPLACE`, which deletes+reinserts rows and can cascade
-//!     unexpected identity changes.
+//!   NOT `INSERT OR REPLACE`, which deletes+reinserts rows and can cascade
+//!   unexpected identity changes.
 //!   - Ingest dedupe: a second entry carrying an imdb_id that already exists
-//!     under a different primary key is REJECTED with a clear error so the
-//!     UI can surface it (import bypasses this check intentionally). The
-//!     unique index (when present) backstops this at the engine level.
+//!   under a different primary key is REJECTED with a clear error so the
+//!   UI can surface it (import bypasses this check intentionally). The
+//!   unique index (when present) backstops this at the engine level.
 //!   - Import runs inside one transaction; any row failure rolls back the
-//!     whole restore and reports the offending row.
+//!   whole restore and reports the offending row.
 //!   - The connection Mutex is poison-tolerant: a panic in one command must
-//!     never wedge every later DB call, so locks use
-//!     `.lock().unwrap_or_else(|poisoned| poisoned.into_inner())`.
+//!   never wedge every later DB call, so locks use
+//!   `.lock().unwrap_or_else(|poisoned| poisoned.into_inner())`.
 //!
 //! USES:    rusqlite (bundled), serde/serde_json, sha2, crate::logger.
 //! USED BY: src-tauri/src/lib.rs (managed state),
-//!          src-tauri/src/commands/mod.rs (all media/settings/export commands).
+//!   src-tauri/src/commands/mod.rs (all media/settings/export commands).
 
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ use sha2::{Digest, Sha256};
 /// Schema/export version reported by exports - keep in sync with tauri.conf.json.
 const EXPORT_FORMAT_VERSION: &str = "0.3";
 
-// ── RECORD STRUCTS (serde camelCase on the wire) ────────────────────────────
+// â”€â”€ RECORD STRUCTS (serde camelCase on the wire) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,7 +205,7 @@ pub struct ImportReport {
     pub first_error: Option<String>,
 }
 
-// ── REPOSITORY ──────────────────────────────────────────────────────────────
+// â”€â”€ REPOSITORY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 pub struct Repository {
     pub conn: std::sync::Mutex<Connection>,
@@ -337,7 +337,7 @@ impl Repository {
         Ok(())
     }
 
-    // ── MEDIA CRUD ───────────────────────────────────────────────────────
+    // â”€â”€ MEDIA CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// Look up the primary key of a media row by its IMDb id (dedupe helper).
     fn find_media_id_by_imdb(&self, conn: &Connection, imdb_id: &str) -> Result<Option<String>> {
@@ -495,7 +495,7 @@ impl Repository {
         conn.execute("DELETE FROM media WHERE id = ?1", params![id])
     }
 
-    // ── APP SETTINGS (single-row JSON store) ─────────────────────────────
+    // â”€â”€ APP SETTINGS (single-row JSON store) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /** Read the persisted AppSettings JSON blob, or None when never saved. */
     pub fn get_app_settings_json(&self) -> Result<Option<String>> {
@@ -565,7 +565,7 @@ impl Repository {
         Ok(())
     }
 
-    // ── FULL RELATIONAL EXPORT / IMPORT ──────────────────────────────────
+    // â”€â”€ FULL RELATIONAL EXPORT / IMPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Export every table to a checksummed JSON document.
@@ -737,7 +737,7 @@ fn iso_utc_now() -> String {
     )
 }
 
-// ── TESTS ───────────────────────────────────────────────────────────────────
+// â”€â”€ TESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // CI-enforced guarantees: migration ordering/idempotency, upsert semantics,
 // IMDb dedupe rejection, import counting, delete, export checksum contract,
 // catalog ordering, and timestamp formatting. Each test uses its own temp

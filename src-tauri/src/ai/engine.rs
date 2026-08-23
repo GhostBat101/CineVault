@@ -1,18 +1,18 @@
-//! ai/engine.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! ai/engine.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: The LocalAIEngine facade. Owns Model Vault state (directory, active
-//!       model id, installed flags) and dispatches generation:
+//!   model id, installed flags) and dispatches generation:
 //!
-//!       1. REAL PATH (`--features real-inference`): when the active model's
-//!          GGUF file exists in the vault, generation runs through
-//!          llama_engine::generate_with_model - genuine token streaming.
-//!       2. TEMPLATE FALLBACK: without the feature (or when the model file is
-//!          absent) a deterministic narrative-analysis template is produced.
-//!          The fallback is logged loudly and streamed through the SAME token
-//!          sink so the UI behaves identically either way.
+//!   1. REAL PATH (`--features real-inference`): when the active model's
+//!   GGUF file exists in the vault, generation runs through
+//!   llama_engine::generate_with_model - genuine token streaming.
+//!   2. TEMPLATE FALLBACK: without the feature (or when the model file is
+//!   absent) a deterministic narrative-analysis template is produced.
+//!   The fallback is logged loudly and streamed through the SAME token
+//!   sink so the UI behaves identically either way.
 //!
 //! PROMPT FORMATS: chat templates are built per the active model catalog entry
-//!       (`llama3` or `chatml`) with a fixed cinematic-analyst system role.
+//!   (`llama3` or `chatml`) with a fixed cinematic-analyst system role.
 //!
 //! USES:    ai/models (catalog), ai/llama_engine (feature-gated), logger.
 //! USED BY: commands/mod.rs (generate_ai_summary + vault commands).
@@ -182,7 +182,7 @@ impl LocalAIEngine {
             .into_iter()
             .find(|m| m.id == active_model_id);
 
-        // ── 1. REAL PATH (feature-gated at compile time) ────────────────────
+        // â”€â”€ 1. REAL PATH (feature-gated at compile time) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         #[cfg(feature = "real-inference")]
         if let Some(meta) = &_meta {
             let model_path = self.get_vault_dir().join(&meta.filename);
@@ -218,7 +218,7 @@ impl LocalAIEngine {
             ));
         }
 
-        // ── 2. TEMPLATE FALLBACK ─────────────────────────────────────────────
+        // â”€â”€ 2. TEMPLATE FALLBACK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         crate::logger::Logger::info(&format!(
             "TEMPLATE analysis (compile with --features real-inference for genuine GGUF generation). model={}",
             active_model_id
@@ -245,7 +245,7 @@ impl LocalAIEngine {
             - **Protagonist Drive & Dilemma**: The central character's journey represents a battle between self-preservation and the intoxicating promise of renewal.\n\
             - **Rising Stakes & Escalation**: Each sequence systematically strips away safety nets, forcing irrecoverable choices with severe visceral consequences.\n\
             - **Thematic Polarization**: Contrasts the illusion of control against unforgiving reality, anchoring the emotional resonance of the climax.\n\n\
-            ### Director's Mise-en-Scène & Cinematographic Cues\n\n\
+            ### Director's Mise-en-ScÃ¨ne & Cinematographic Cues\n\n\
             - **Visual Palette & Contrast**: High-contrast framing that transitions from clinical, sterile claustrophobia to saturated, frenzied compositions.\n\
             - **Pacing & Soundscape**: Sudden tonal shifts punctuated by discordant sound design and deliberate silence to heighten dread and immersion.\n\n\
             *Template analysis synthesized locally via {} under safe 2.0 GB VRAM envelope.*",

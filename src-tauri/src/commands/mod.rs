@@ -1,25 +1,25 @@
-//! commands/mod.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! commands/mod.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: Every `#[tauri::command]` exposed to the webview, registered in
-//!       lib.rs's invoke_handler. Thin layer: validate args, call into
-//!       repository / scraper / AI engine / downloader, map errors to strings.
+//!   lib.rs's invoke_handler. Thin layer: validate args, call into
+//!   repository / scraper / AI engine / downloader, map errors to strings.
 //!
 //! ARG CASING CONTRACT: Tauri v2 auto-converts camelCase JS keys to these
-//!       snake_case parameters (e.g. JS `{ imdbUrl }` -> `imdb_url`).
-//!       Struct payloads (MediaRecord, InferenceRequest) are camelCase via
-//!       serde rename_all - see services/api.ts for the mirrored contract.
+//!   snake_case parameters (e.g. JS `{ imdbUrl }` -> `imdb_url`).
+//!   Struct payloads (MediaRecord, InferenceRequest) are camelCase via
+//!   serde rename_all - see services/api.ts for the mirrored contract.
 //!
 //! DESIGN NOTES:
 //!   - Repository state is managed as `std::sync::Arc<Repository>` (see
-//!     lib.rs). DB commands clone the Arc and run blocking SQLite calls via
-//!     `tauri::async_runtime::spawn_blocking`, so slow queries never block
-//!     the Tokio runtime threads that drive IPC and HTTP.
+//!   lib.rs). DB commands clone the Arc and run blocking SQLite calls via
+//!   `tauri::async_runtime::spawn_blocking`, so slow queries never block
+//!   the Tokio runtime threads that drive IPC and HTTP.
 //!   - `extract_imdb` also populates `posterLocalPath` by best-effort caching
-//!     the poster into `<app_cache_dir>/posters/<imdbId>.jpg`; any cache
-//!     failure only logs a warning - extraction itself must not fail.
+//!   the poster into `<app_cache_dir>/posters/<imdbId>.jpg`; any cache
+//!   failure only logs a warning - extraction itself must not fail.
 //!
 //! USES:    telemetry/hardware, scraper/imdb, ai/{engine,downloader},
-//!          db/repository, logger.
+//!   db/repository, logger.
 //! USED BY: src-tauri/src/lib.rs (generate_handler! list).
 
 use tauri::{AppHandle, Emitter, State};
@@ -200,7 +200,7 @@ pub async fn generate_ai_summary(
 ) -> Result<InferenceResponse, String> {
     crate::logger::Logger::info(&format!("Generating AI Summary for prompt: {:.60}...", request.prompt));
 
-    // ── Inject persisted user preferences when the request omits them ────
+    // â”€â”€ Inject persisted user preferences when the request omits them â”€â”€â”€â”€
     if let Ok(Some(raw)) = repo.get_app_settings_json() {
         if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&raw) {
             if request.temperature.is_none() {
@@ -253,7 +253,7 @@ pub async fn generate_ai_summary(
         }
     }
 
-    // ── Streaming: forward every generated piece to the webview tagged with
+    // â”€â”€ Streaming: forward every generated piece to the webview tagged with
     // the request's clientId, so only the OWNING useAISummary instance
     // consumes the stream (the event bus is global).
     let sink_handle = app_handle.clone();

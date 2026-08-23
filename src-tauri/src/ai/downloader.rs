@@ -1,19 +1,19 @@
-//! ai/downloader.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! ai/downloader.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: Resilient GGUF model downloader. Streams weights to a `.part` temp
-//!       file, hashes content WHILE downloading, verifies SHA-256 (fail-closed)
-//!       and only then atomically renames into the Model Vault.
+//!   file, hashes content WHILE downloading, verifies SHA-256 (fail-closed)
+//!   and only then atomically renames into the Model Vault.
 //!
 //! SAFETY PROPERTIES:
 //!   - Hash verification is STREAMED (constant memory; no whole-file read).
 //!   - Fresh downloads are verified too - a cleanly-truncated body fails.
 //!   - The final model filename appears on disk only via atomic rename of the
-//!     fully-verified .part file; interrupted attempts never leave a file that
-//!     could later pass an existence check.
+//!   fully-verified .part file; interrupted attempts never leave a file that
+//!   could later pass an existence check.
 //!
 //! USES:    reqwest (stream), sha2, tokio/fs, logger.
 //! USED BY: src-tauri/src/commands/mod.rs (download_ai_model,
-//!          generate_ai_summary first-use auto-download).
+//!   generate_ai_summary first-use auto-download).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

@@ -1,32 +1,32 @@
-//! logger.rs
-//! ─────────────────────────────────────────────────────────────
+﻿//! logger.rs
+//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! WHAT: Minimal process-wide file + stdout logger. Writes timestamped lines
-//!       to `<logs_dir>/cinevault.log` via [`Logger::{init, info, warn,
-//!       error, log}`], rotating the active file to `cinevault.1.log` when
-//!       it exceeds [`MAX_LOG_FILE_BYTES`].
+//!   to `<logs_dir>/cinevault.log` via [`Logger::{init, info, warn,
+//!   error, log}`], rotating the active file to `cinevault.1.log` when
+//!   it exceeds [`MAX_LOG_FILE_BYTES`].
 //!
 //! DESIGN NOTES:
 //!   - Static GLOBAL_LOGGER (`Mutex<Option<Logger>>`) holds only the log
-//!     file path; every write opens the file in append mode, writes one
-//!     line, explicitly flushes and closes it. Entries therefore hit disk
-//!     immediately - there is no lingering handle or in-process buffer -
-//!     which is what makes a graceful `window.close()` shutdown safe.
+//!   file path; every write opens the file in append mode, writes one
+//!   line, explicitly flushes and closes it. Entries therefore hit disk
+//!   immediately - there is no lingering handle or in-process buffer -
+//!   which is what makes a graceful `window.close()` shutdown safe.
 //!   - Rotation is size-based with ONE backup slot: once the active file
-//!     passes the limit it is renamed to `<stem>.1.log` and the next write
-//!     recreates a fresh active log. The previous backup is removed first
-//!     because Windows renames fail onto existing files.
+//!   passes the limit it is renamed to `<stem>.1.log` and the next write
+//!   recreates a fresh active log. The previous backup is removed first
+//!   because Windows renames fail onto existing files.
 //!   - Rotation check + write happen under a single lock acquisition, so two
-//!     threads can never race a rename against an open append handle.
+//!   threads can never race a rename against an open append handle.
 //!   - Timestamps use Howard Hinnant's civil-from-days conversion (leap-day
-//!     exact). The helper is duplicated from db::repository::iso_utc_now
-//!     instead of shared because this logger is a leaf module that must not
-//!     depend on the database layer.
+//!   exact). The helper is duplicated from db::repository::iso_utc_now
+//!   instead of shared because this logger is a leaf module that must not
+//!   depend on the database layer.
 //!
 //! USES:    std only (fs, io, sync, time). No external crates.
 //! USED BY: src-tauri/src/lib.rs (boot logging),
-//!          src-tauri/src/db/repository.rs (migration warnings),
-//!          src-tauri/src/commands/mod.rs, scraper/imdb.rs,
-//!          ai/{engine,downloader}.rs via `crate::logger::Logger::*`.
+//!   src-tauri/src/db/repository.rs (migration warnings),
+//!   src-tauri/src/commands/mod.rs, scraper/imdb.rs,
+//!   ai/{engine,downloader}.rs via `crate::logger::Logger::*`.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
