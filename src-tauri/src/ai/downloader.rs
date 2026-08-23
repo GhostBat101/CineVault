@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
 use crate::logger::Logger;
@@ -32,7 +32,15 @@ use crate::logger::Logger;
 /// Registration/unregistration happens ONLY in the thin
 /// [`ModelDownloader::download_gguf_model`] wrapper, so every exit path of
 /// [`ModelDownloader::download_gguf_model_inner`] is covered by construction.
-static IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+///
+/// OnceLock indirection: `HashSet::new()` is not a `const fn` on stable Rust,
+/// so the set cannot live directly inside a `static Mutex`.
+static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+/// Lazily-initialized access to the in-flight download registry.
+fn in_flight_registry() -> &'static Mutex<HashSet<String>> {
+    IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 /// Progress payload emitted through the `model_download_progress` event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,7 +123,7 @@ impl ModelDownloader {
         F: Fn(DownloadProgress) + Send + Sync + 'static,
     {
         {
-            let mut in_flight = IN_FLIGHT
+            let mut in_flight = in_flight_registry()
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !in_flight.insert(filename.to_string()) {
@@ -134,7 +142,7 @@ impl ModelDownloader {
 
         // Single exit funnel: whatever inner returned, this filename is no
         // longer downloading.
-        let mut in_flight = IN_FLIGHT
+        let mut in_flight = in_flight_registry()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         in_flight.remove(filename);
