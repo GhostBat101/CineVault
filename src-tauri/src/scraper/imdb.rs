@@ -1,9 +1,13 @@
 ﻿//! scraper/imdb.rs
-//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//! WHAT: IMDb metadata extraction. [`ImdbScraper::scrape_url`] resolves a
-//!   title from a user-supplied URL or bare id, parses schema.org
-//!   JSON-LD first, falls back to DOM scraping, then to IMDb's public
-//!   suggestion API, enriching synopses via Wikipedia.
+//! ------------------------------------------------------------------------------
+//! WHAT: IMDb metadata extraction. [`ImdbScraper::scrape_url`] resolves a title
+//!   from a user-supplied URL or bare id using a TWO-STAGE flow:
+//!     1. BASE: IMDb's CDN suggestion JSON API (no bot wall) supplies
+//!        title/year/poster/type/cast.
+//!     2. ENRICHMENT: the HTML title page is fetched and sniffed for IMDb's
+//!        HTTP-202 JavaScript bot-wall; only genuine pages are parsed for
+//!        schema.org JSON-LD, which overlays runtime/rating/genres/directors/
+//!        synopsis onto the base. Wikipedia enriches thin synopses.
 //!
 //! DESIGN NOTES:
 //!   - The whole flow is wrapped in a [`SCRAPE_TIMEOUT_SECS`] budget so a
@@ -11,10 +15,12 @@
 //!   - ID extraction is a strict hand-rolled scanner (the crate has NO
 //!   `regex` dependency): it only accepts `tt` followed by 7..=10 ASCII
 //!   digits, not glued into a longer token, anywhere in the input.
+//!   - The DOM-scraper fallback was REMOVED: against the bot-wall it could
+//!   only fabricate "Unknown Title" records, masking the real failure.
 //!   - `poster_local_path` is populated by the caller (commands/mod.rs)
 //!   after best-effort local caching; this module always leaves it None.
 //!
-//! USES:    reqwest, scraper (DOM), serde_json, tokio (timeout), urlencoding.
+//! USES:    reqwest, scraper (JSON-LD extraction), serde_json, tokio (timeout), urlencoding.
 //! USED BY: src-tauri/src/commands/mod.rs (`extract_imdb`),
 //!   src/types/index.ts mirrors ScrapedMedia as its TS contract.
 
@@ -93,32 +99,100 @@ impl ImdbScraper {
             .build()
             .map_err(|e| e.to_string())?;
 
-        // Attempt 1: Fetch HTML and parse schema.org JSON-LD
+        // - BASE: Suggestion API FIRST -
+        // IMDb's HTML endpoint serves an HTTP-202 JavaScript bot-wall to
+        // non-browser clients (verified live: ~2KB page, no JSON-LD, no real
+        // <h1>). The CDN suggestion JSON endpoint has no such wall, so it is
+        // the reliable foundation: title/year/poster/type/cast.
+        let base: Option<ScrapedMedia> = Self::fetch_suggestion_api(&imdb_id).await.ok();
+
+        // - ENRICHMENT: HTML JSON-LD (skipped when bot-walled) -
+        // The wall page itself returns 202 (a 2xx!), so status alone cannot
+        // be trusted - the body is sniffed for the wall markers too. When a
+        // real page comes through, JSON-LD supplies the fields the suggestion
+        // API lacks: runtime, rating, genres, directors, full synopsis.
+        let mut enriched: Option<ScrapedMedia> = None;
         if let Ok(resp) = client.get(&clean_url).send().await {
             if resp.status().is_success() {
                 if let Ok(response_text) = resp.text().await {
-                    if let Some(mut scraped) = Self::parse_json_ld(&imdb_id, &response_text) {
-                        if scraped.synopsis.as_ref().map(|s| s.len() < 30).unwrap_or(true) {
-                            if let Some(wiki_text) = Self::fetch_wikipedia_summary(&scraped.title, scraped.year).await {
-                                scraped.synopsis = Some(wiki_text);
-                            }
-                        }
-                        return Ok(scraped);
-                    }
-                    if let Ok(mut scraped) = Self::parse_dom_fallback(&imdb_id, &response_text) {
-                        if scraped.synopsis.as_ref().map(|s| s.len() < 30).unwrap_or(true) {
-                            if let Some(wiki_text) = Self::fetch_wikipedia_summary(&scraped.title, scraped.year).await {
-                                scraped.synopsis = Some(wiki_text);
-                            }
-                        }
-                        return Ok(scraped);
+                    if !Self::is_bot_wall(&response_text) {
+                        enriched = Self::parse_json_ld(&imdb_id, &response_text);
                     }
                 }
             }
         }
 
-        // Attempt 2: Fallback to IMDb JSON Suggestion API + Wikipedia Summary API
-        Self::fetch_suggestion_api(&imdb_id).await
+        // - MERGE -
+        let mut result = match (base, enriched) {
+            (Some(mut b), Some(e)) => {
+                Self::merge_enrichment(&mut b, e);
+                b
+            }
+            (Some(b), None) => b,
+            (None, Some(e)) => e,
+            (None, None) => {
+                return Err(format!(
+                    "Could not retrieve IMDb metadata for {imdb_id}: the title page is bot-protected and the suggestion API had no match for this id."
+                ));
+            }
+        };
+
+        // Wikipedia enrichment when the merged synopsis is thin/absent.
+        if result.synopsis.as_ref().map(|s| s.len() < 30).unwrap_or(true) {
+            if let Some(wiki_text) = Self::fetch_wikipedia_summary(&result.title, result.year).await {
+                result.synopsis = Some(wiki_text);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /**
+     * Detect IMDb's anti-bot interstitial. The wall returns HTTP 202 (a 2xx,
+     * so status checks alone are useless) with a tiny noscript body. Real
+     * title pages are hundreds of KB; the wall is ~2KB.
+     */
+    fn is_bot_wall(html: &str) -> bool {
+        html.contains("verify that you're not a robot")
+            || html.contains("JavaScript is disabled")
+            || html.len() < 10_000
+    }
+
+    /**
+     * Overlay HTML-derived fields onto the suggestion-API base. Enrichment
+     * wins ONLY where it carries real data; base fields are never degraded.
+     */
+    fn merge_enrichment(base: &mut ScrapedMedia, e: ScrapedMedia) {
+        if !e.original_title.as_deref().unwrap_or("").is_empty() {
+            base.original_title = e.original_title;
+        }
+        if e.year.is_some() {
+            base.year = e.year;
+        }
+        base.media_type = e.media_type;
+        if e.runtime_minutes.is_some() {
+            base.runtime_minutes = e.runtime_minutes;
+        }
+        if e.imdb_rating.is_some() {
+            base.imdb_rating = e.imdb_rating;
+        }
+        if e.poster_url.as_deref().unwrap_or("").len() > base.poster_url.as_deref().unwrap_or("").len() {
+            base.poster_url = e.poster_url;
+        }
+        if e.synopsis.as_deref().map(|s| s.len()).unwrap_or(0)
+            > base.synopsis.as_deref().map(|s| s.len()).unwrap_or(0)
+        {
+            base.synopsis = e.synopsis;
+        }
+        if !e.genres.is_empty() {
+            base.genres = e.genres;
+        }
+        if !e.directors.is_empty() {
+            base.directors = e.directors;
+        }
+        if !e.cast_members.is_empty() {
+            base.cast_members = e.cast_members;
+        }
     }
 
     /**
@@ -419,41 +493,10 @@ impl ImdbScraper {
 
         if total > 0 { Some(total) } else { None }
     }
-
-    fn parse_dom_fallback(imdb_id: &str, html: &str) -> Result<ScrapedMedia, String> {
-        let document = Html::parse_document(html);
-
-        let title_selector = Selector::parse("h1").map_err(|e| e.to_string())?;
-        let title = document.select(&title_selector)
-            .next()
-            .map(|el| el.text().collect::<Vec<_>>().join("").trim().to_string())
-            .unwrap_or_else(|| "Unknown Title".to_string());
-
-        let plot_selector = Selector::parse("span[data-testid=\"plot-xs_to_m\"], span[data-testid=\"plot-xl\"]").ok();
-        let synopsis = plot_selector.and_then(|sel| {
-            document.select(&sel).next().map(|el| el.text().collect::<Vec<_>>().join("").trim().to_string())
-        });
-
-        Ok(ScrapedMedia {
-            imdb_id: imdb_id.to_string(),
-            title,
-            original_title: None,
-            year: None,
-            media_type: "movie".to_string(),
-            runtime_minutes: None,
-            imdb_rating: None,
-            poster_url: None,
-            poster_local_path: None,
-            synopsis,
-            genres: vec![],
-            directors: vec![],
-            cast_members: vec![],
-        })
-    }
 }
 
-// â”€â”€ TESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Contract for ID extraction: bare IDs, full URLs, surrounding punctuation,
+// ------------------------------------------------------------------------------
+// TESTS: ID extraction contract - bare IDs, full URLs, surrounding punctuation,
 // and the 7-10 digit validity window. Junk input must yield None, never a
 // partial or fabricated ID (a wrong ID silently ingests the wrong movie).
 
@@ -510,7 +553,7 @@ mod tests {
     }
 }
 
-// â”€â”€ Regression tests for audit BUG-HIGH-01 / BUG-MED-02 / BUG-MED-03 â”€â”€â”€â”€â”€â”€â”€
+// - Regression tests for audit BUG-HIGH-01 / BUG-MED-02 / BUG-MED-03 -
 
 #[cfg(test)]
 mod duration_tests {
@@ -547,5 +590,79 @@ mod duration_tests {
             Some(id) => assert!(id.eq_ignore_ascii_case("tt1375666"), "got: {id}"),
             None => panic!("uppercase TT must be accepted"),
         }
+    }
+}
+
+// - Tests: bot-wall sniffing + suggestion-base enrichment merge -
+
+#[cfg(test)]
+mod flow_tests {
+    use super::{ImdbScraper, ScrapedMedia, ScrapedCastMember};
+
+    fn base_media() -> ScrapedMedia {
+        ScrapedMedia {
+            imdb_id: "tt1375666".to_string(),
+            title: "Suggestion Title".to_string(),
+            original_title: None,
+            year: Some(2010),
+            media_type: "movie".to_string(),
+            runtime_minutes: None,
+            imdb_rating: None,
+            poster_url: Some("short".to_string()),
+            poster_local_path: None,
+            synopsis: Some("Short base synopsis.".to_string()),
+            genres: vec![],
+            directors: vec![],
+            cast_members: vec![ScrapedCastMember {
+                name: "Base Cast".to_string(),
+                character_name: None,
+                avatar_url: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn bot_wall_sniffer_flags_interstitial_and_tiny_pages() {
+        let wall = "<h1>JavaScript is disabled</h1> In order to continue, we need to verify that you're not a robot.";
+        assert!(ImdbScraper::is_bot_wall(wall));
+        assert!(ImdbScraper::is_bot_wall("tiny"));
+        // A genuine page: long, no wall markers.
+        let real = format!("<html>{}<h1>Real Title</h1></html>", "x".repeat(20_000));
+        assert!(!ImdbScraper::is_bot_wall(&real));
+    }
+
+    #[test]
+    fn enrichment_overlays_base_without_degrading_it() {
+        let mut base = base_media();
+        let mut e = base_media();
+        e.title = "JSON-LD Title".to_string(); // base title must WIN (suggestion is canonical)
+        e.original_title = Some("Original".to_string());
+        e.runtime_minutes = Some(148);
+        e.imdb_rating = Some(8.5);
+        e.genres = vec!["Sci-Fi".to_string()];
+        e.directors = vec!["Christopher Nolan".to_string()];
+        e.synopsis = Some("A much longer enriched synopsis from the real page.".to_string());
+        e.cast_members = vec![]; // empty enrichment must NOT wipe base cast
+
+        ImdbScraper::merge_enrichment(&mut base, e);
+
+        assert_eq!(base.title, "Suggestion Title");
+        assert_eq!(base.original_title.as_deref(), Some("Original"));
+        assert_eq!(base.runtime_minutes, Some(148));
+        assert_eq!(base.imdb_rating, Some(8.5));
+        assert_eq!(base.genres, vec!["Sci-Fi".to_string()]);
+        assert_eq!(base.directors, vec!["Christopher Nolan".to_string()]);
+        assert!(base.synopsis.as_deref().unwrap().starts_with("A much longer"));
+        assert_eq!(base.cast_members.len(), 1, "empty enrichment must not erase base cast");
+    }
+
+    #[test]
+    fn empty_enrichment_leaves_base_untouched() {
+        let mut base = base_media();
+        let before = base.clone();
+        let e = base_media(); // identical -> nothing longer/non-empty
+        ImdbScraper::merge_enrichment(&mut base, e);
+        assert_eq!(base.synopsis, before.synopsis);
+        assert_eq!(base.poster_url, before.poster_url);
     }
 }
