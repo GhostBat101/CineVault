@@ -80,6 +80,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         if (cancelled || !settings) return;
         if (typeof settings.temperature === 'number') setTemperature(settings.temperature);
         if (settings.inferenceMode) setOffloadMode(settings.inferenceMode);
+        if (typeof settings.omdbApiKey === 'string') {
+          setOmdbApiKeyDraft(settings.omdbApiKey);
+          omdbKeySavedRef.current = settings.omdbApiKey;
+        }
       })
       .catch((err) => console.warn('[Settings Load]', err));
     return () => {
@@ -89,6 +93,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   /** Pending patch accumulated across rapid changes; flushed on debounce OR unmount. */
   const pendingPatchRef = React.useRef<Partial<AppSettings>>({});
+
+  // OMDb enrichment key - hydrated with the rest of settings, committed on blur
+  /** Draft text for the OMDb API key input. */
+  const [omdbApiKeyDraft, setOmdbApiKeyDraft] = React.useState<string>('');
+  /** The last value known to be persisted (avoids redundant saves). */
+  const omdbKeySavedRef = React.useRef<string>('');
 
   /**
    * Debounce-persist a partial settings patch to SQLite. Sliders fire many
@@ -119,6 +129,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     pendingPatchRef.current = {};
     if (Object.keys(toSave).length === 0) return;
     api.saveAppSettings(toSave).catch((err) => console.warn('[Settings Flush]', err));
+  };
+
+  /** Commit the OMDb key on blur/Enter - immediate save, no debounce. */
+  const commitOmdbApiKey = () => {
+    const trimmed = omdbApiKeyDraft.trim();
+    if (trimmed === omdbKeySavedRef.current) return;
+    omdbKeySavedRef.current = trimmed;
+    setOmdbApiKeyDraft(trimmed);
+    api
+      .saveAppSettings({ omdbApiKey: trimmed })
+      .then(() => showStatus(trimmed ? 'OMDb API key saved - enrichment active.' : 'OMDb API key cleared.'))
+      .catch((err) => console.warn('[OMDb Key Save]', err));
   };
 
   // App Update Checker State
@@ -841,8 +863,53 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
+        {/* TAB: IMDb Ingestion - OMDb enrichment key (real implementation) */}
+        {activeTab === 'scraper' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '4px' }}>IMDb Ingestion Enrichment</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                IMDb bot-walls direct page scraping, so titles are ingested via IMDb's CDN API (title/year/poster/cast always work).
+                An <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>OMDb API key</a> (free,
+                1,000 lookups/day) additionally unlocks ratings, runtimes, genres, and directors during extraction.
+              </p>
+            </div>
+
+            <div className="glass-panel" style={{ padding: '20px', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  OMDb API Key
+                </label>
+                <input
+                  type="password"
+                  value={omdbApiKeyDraft}
+                  onChange={(e) => setOmdbApiKeyDraft(e.target.value)}
+                  onBlur={commitOmdbApiKey}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitOmdbApiKey();
+                  }}
+                  placeholder="e.g. a1b2c3d4 (leave empty to skip enrichment)"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-medium)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-primary)',
+                    fontSize: '13px',
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                />
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  Stored locally in your SQLite vault. The key is sent only to omdbapi.com during extraction.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Tabs whose backing features are not implemented yet - honest copy */}
-        {(activeTab === 'scraper' || activeTab === 'director' || activeTab === 'storage') && (
+        {(activeTab === 'director' || activeTab === 'storage') && (
           <div className="glass-panel" style={{ padding: '24px', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
             <h4 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px' }}>{tabs.find((t) => t.id === activeTab)?.label}</h4>
             <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>

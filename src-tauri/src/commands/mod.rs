@@ -178,8 +178,32 @@ pub async fn get_telemetry(
  * `<app cache dir>/posters/<imdbId>.jpg`; on any cache failure it stays null.
  */
 #[tauri::command]
-pub async fn extract_imdb(imdb_url: String, app_handle: AppHandle) -> Result<ScrapedMedia, String> {
+pub async fn extract_imdb(
+    imdb_url: String,
+    repo: State<'_, std::sync::Arc<Repository>>,
+    app_handle: AppHandle,
+) -> Result<ScrapedMedia, String> {
     let mut scraped = ImdbScraper::scrape_url(&imdb_url).await?;
+
+    // ── Optional OMDb enrichment ────────────────────────────────────────────
+    // IMDb's HTML page is bot-walled, so the fields its JSON-LD used to carry
+    // (rating/runtime/genres/directors) are unavailable from the suggestion
+    // API. When the user has saved an OMDb API key (free tier), overlay those
+    // fields here. Absent key = silently skip (suggestion data still stands).
+    if let Some(api_key) = load_stored_settings(&repo)
+        .await
+        .and_then(|settings| settings.get("omdbApiKey").cloned())
+        .and_then(|value| value.as_str().map(|s| s.trim().to_string()))
+        .filter(|key| !key.is_empty())
+    {
+        match enrich_from_omdb(&scraped.imdb_id, &api_key).await {
+            Ok(omdb) => merge_omdb_enrichment(&mut scraped, omdb),
+            Err(e) => crate::logger::Logger::warn(&format!(
+                "OMDb enrichment skipped for {}: {}",
+                scraped.imdb_id, e
+            )),
+        }
+    }
 
     // Poster caching must never fail extraction: own 8s budget + warn-only errors.
     let imdb_id = scraped.imdb_id.clone();
@@ -209,6 +233,108 @@ pub async fn extract_imdb(imdb_url: String, app_handle: AppHandle) -> Result<Scr
     }
 
     Ok(scraped)
+}
+
+/// Raw fields we consume from an OMDb title response. OMDb emits PascalCase
+/// keys EXCEPT its imdb* family (lowercase i) - hence the explicit rename.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct OmdbEnrichment {
+    #[serde(default)]
+    runtime: Option<String>,
+    #[serde(default)]
+    genre: Option<String>,
+    #[serde(default)]
+    director: Option<String>,
+    #[serde(default)]
+    plot: Option<String>,
+    #[serde(default, rename = "imdbRating")]
+    imdb_rating: Option<String>,
+}
+
+/// "148 min" -> Some(148); anything unparsable -> None.
+fn parse_omdb_runtime(runtime: &str) -> Option<i32> {
+    runtime
+        .split_whitespace()
+        .next()
+        .and_then(|token| token.parse::<i32>().ok())
+}
+
+/// Overlay OMDb data onto the scraped base. OMDb wins only where the base is
+/// missing/thin; the base is never degraded (same philosophy as the scraper's
+/// HTML-enrichment merge).
+fn merge_omdb_enrichment(base: &mut ScrapedMedia, omdb: OmdbEnrichment) {
+    if base.imdb_rating.is_none() {
+        base.imdb_rating = omdb
+            .imdb_rating
+            .as_deref()
+            .and_then(|r| r.parse::<f32>().ok());
+    }
+    if base.runtime_minutes.is_none() {
+        base.runtime_minutes = omdb.runtime.as_deref().and_then(parse_omdb_runtime);
+    }
+    if base.genres.is_empty() {
+        base.genres = omdb
+            .genre
+            .map(|g| {
+                g.split(',')
+                    .map(|item| item.trim().to_string())
+                    .filter(|item| !item.is_empty() && item != "N/A")
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    if base.directors.is_empty() {
+        base.directors = omdb
+            .director
+            .map(|d| {
+                d.split(',')
+                    .map(|item| item.trim().to_string())
+                    .filter(|item| !item.is_empty() && item != "N/A")
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    if base.synopsis.as_deref().map(|s| s.len()).unwrap_or(0) < 30 {
+        if let Some(plot) = omdb.plot.filter(|p| p != "N/A") {
+            base.synopsis = Some(plot);
+        }
+    }
+}
+
+/// Query OMDb by IMDb id. Any network/parse failure returns Err and the
+/// caller logs-and-continues - enrichment must never break extraction.
+async fn enrich_from_omdb(imdb_id: &str, api_key: &str) -> Result<OmdbEnrichment, String> {
+    let url = format!(
+        "https://www.omdbapi.com/?i={}&apikey={}&plot=full",
+        imdb_id, api_key
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response: serde_json::Value = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("network: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("decode: {e}"))?;
+
+    // OMDb signals failure in-band: {"Response":"False","Error":"..."}
+    if response.get("Response").and_then(|r| r.as_str()) == Some("False") {
+        return Err(format!(
+            "OMDb error: {}",
+            response
+                .get("Error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown")
+        ));
+    }
+
+    serde_json::from_value(response).map_err(|e| format!("shape: {e}"))
 }
 
 /**

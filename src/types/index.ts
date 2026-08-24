@@ -228,6 +228,8 @@ export interface AppSettings {
   telemetryRefreshMs: number;
   sidebarAutoCollapse: boolean;
   uiScaling: number;
+  /** OMDb API key (optional) - unlocks rating/runtime/genre enrichment during IMDb ingest. */
+  omdbApiKey?: string;
 }
 
 export interface AppUpdateAsset {

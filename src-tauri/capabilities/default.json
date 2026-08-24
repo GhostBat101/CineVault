@@ -1,10 +1,12 @@
 {
   "$schema": "gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the CineVault main window: core runtime permissions (window controls, event listen/emit) plus the dialog plugin used by the manual poster import command.",
+  "description": "Default capability for the CineVault main window: core runtime permissions, explicit window-drag (the frameless titlebar's data-tauri-drag-region needs allow-start-dragging), and the dialog plugin used by poster/model importers.",
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "dialog:default"
   ]
 }

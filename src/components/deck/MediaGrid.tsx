@@ -25,7 +25,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Media, WatchStatus } from '../../types';
 import { MediaCard } from './MediaCard';
-import { Filter, ArrowUpDown } from 'lucide-react';
+import { Filter, ArrowUpDown, Film } from 'lucide-react';
 
 interface MediaGridProps {
   mediaList: Media[];
@@ -374,7 +374,7 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
             border: '1px dashed var(--border-medium)',
           }}
         >
-          <div style={{ fontSize: '40px', marginBottom: '12px' }}>🎬</div>
+          <Film size={40} strokeWidth={1.5} color="var(--text-muted)" style={{ marginBottom: '12px' }} />
           <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>
             {isFilteredEmpty ? 'No matches in your vault' : 'No media found'}
           </h3>

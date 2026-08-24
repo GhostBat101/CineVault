@@ -1,22 +1,23 @@
 /**
  * utils/poster.ts
  * ─────────────────────────────────────────────────────────────
- * WHAT: Resolves the best available <img> source for a poster, preferring the
- *       LOCALLY CACHED file (populated by the backend at ingest time) over the
- *       remote CDN URL - this is what makes posters truly offline-capable.
+ * WHAT: Resolves poster image sources with a FALLBACK CHAIN: locally cached
+ *       file first (populated by the backend at ingest), then the remote CDN
+ *       URL, then nothing (caller renders an icon). Consumers drive the chain
+ *       with an onError handler that advances to the next candidate - this is
+ *       what makes posters survive any single failing leg (asset-protocol
+ *       hiccups, CDN hotlink blocks, offline).
  *
- * ASSET PROTOCOL: Local paths are exposed to the webview through Tauri's
- *   asset protocol via convertFileSrc(); the scope configured in tauri.conf.json
- *   must cover the cache/posters directory. In a non-Tauri context
- *   convertFileSrc still returns a well-formed asset URL which will simply fail
- *   to load - callers therefore keep an onError fallback chain.
+ * ASSET PROTOCOL: Local paths are exposed through Tauri's asset protocol via
+ *   convertFileSrc(); the scope in tauri.conf.json covers the cache/posters
+ *   directory. A failing asset URL simply advances the chain.
  *
  * USES:    @tauri-apps/api/core (convertFileSrc).
  * USED BY: components/deck/{MediaCard,MediaDetailModal,IngestModal}.tsx.
  */
 import { convertFileSrc } from '@tauri-apps/api/core';
 
-/** Minimal shape needed to resolve a poster (subset of Media / ScrapedMedia). */
+/** Minimal shape needed to resolve posters (subset of Media / ScrapedMedia). */
 interface PosterSource {
   /** Backend-cached local file path, when the poster was downloaded. */
   posterLocalPath?: string | null;
@@ -25,14 +26,26 @@ interface PosterSource {
 }
 
 /**
- * Pick the most offline-friendly poster source.
- * Order: local cached file -> remote URL -> undefined (caller renders fallback).
- * Null-safe: a null/undefined media object simply yields undefined.
+ * Ordered poster candidates, best (offline-capable) first. Duplicates and
+ * empties removed so consumers can blindly walk the list on error.
+ */
+export function getPosterCandidates(media: PosterSource | null | undefined): string[] {
+  if (!media) return [];
+  const candidates: string[] = [];
+  if (media.posterLocalPath) {
+    candidates.push(convertFileSrc(media.posterLocalPath));
+  }
+  if (media.posterUrl) {
+    candidates.push(media.posterUrl);
+  }
+  return [...new Set(candidates)];
+}
+
+/**
+ * Single best poster source (first candidate), for callers that do not
+ * implement the full chain.
  */
 export function getPosterSrc(media: PosterSource | null | undefined): string | undefined {
-  if (!media) return undefined;
-  if (media.posterLocalPath) {
-    return convertFileSrc(media.posterLocalPath);
-  }
-  return media.posterUrl || undefined;
+  return getPosterCandidates(media)[0];
 }
+

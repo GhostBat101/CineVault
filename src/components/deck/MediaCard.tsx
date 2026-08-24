@@ -21,8 +21,8 @@
  */
 import { memo, useState } from 'react';
 import { Media, WatchStatus } from '../../types';
-import { getPosterSrc } from '../../utils/poster';
-import { Star, Clock, Sparkles, Heart } from 'lucide-react';
+import { getPosterCandidates } from '../../utils/poster';
+import { Star, Clock, Sparkles, Heart, Film } from 'lucide-react';
 
 interface MediaCardProps {
   /** Entity rendered by this card. */
@@ -66,10 +66,15 @@ export const MediaCard = memo<MediaCardProps>(({
   onStatusChange,
   style,
 }) => {
-  /** True once the resolved poster src has failed to load -> show fallback tile. */
-  const [posterFailed, setPosterFailed] = useState(false);
-  /** Best available poster source: local cache first, remote URL second. */
-  const posterSrc = getPosterSrc(media);
+  /**
+   * Poster fallback chain: local cached file -> remote CDN URL -> icon.
+   * posterStage indexes the candidate list; each img error advances it, so a
+   * failing asset-protocol URL still lets the remote render (and vice versa)
+   * before the icon fallback shows.
+   */
+  const posterCandidates = getPosterCandidates(media);
+  const [posterStage, setPosterStage] = useState(0);
+  const posterSrc = posterCandidates[posterStage];
 
   /** Next status in the cycle, for tooltip copy. */
   const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(media.userStatus) + 1) % STATUS_CYCLE.length];
@@ -123,12 +128,12 @@ export const MediaCard = memo<MediaCardProps>(({
           overflow: 'hidden',
         }}
       >
-        {posterSrc && !posterFailed ? (
+        {posterSrc ? (
           <img
             src={posterSrc}
             alt={`${media.title} poster`}
             loading="lazy"
-            onError={() => setPosterFailed(true)}
+            onError={() => setPosterStage((stage) => stage + 1)}
             className="cv-zoom-img"
             style={{
               width: '100%',
@@ -137,7 +142,8 @@ export const MediaCard = memo<MediaCardProps>(({
             }}
           />
         ) : (
-          // Fallback tile when no poster exists OR the URL failed offline.
+          // Fallback tile: every poster candidate failed (or none existed).
+          // Lucide icon instead of an emoji - renders regardless of font subsets.
           <div
             style={{
               width: '100%',
@@ -145,11 +151,10 @@ export const MediaCard = memo<MediaCardProps>(({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '32px',
               color: 'var(--text-muted)',
             }}
           >
-            —
+            <Film size={32} strokeWidth={1.5} />
           </div>
         )}
 

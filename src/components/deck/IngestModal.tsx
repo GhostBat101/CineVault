@@ -23,7 +23,7 @@ import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { api, isTauri } from '../../services/api';
-import { getPosterSrc } from '../../utils/poster';
+import { getPosterSrc, getPosterCandidates } from '../../utils/poster';
 import { Media, MediaType } from '../../types';
 import { Sparkles, Globe, PenTool, CheckCircle, ImagePlus, AlertTriangle } from 'lucide-react';
 
@@ -357,7 +357,16 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                   src={getPosterSrc(scrapedData)}
                   alt={scrapedData.title}
                   onError={(e) => {
-                    e.currentTarget.style.display = 'none';
+                    // Local asset leg failed - fall back to the remote CDN
+                    // URL before giving up (chain order from getPosterCandidates).
+                    const candidates = getPosterCandidates(scrapedData);
+                    const current = e.currentTarget.src;
+                    const next = candidates.find((c) => c !== current && !current.endsWith(c));
+                    if (next) {
+                      e.currentTarget.src = next;
+                    } else {
+                      e.currentTarget.style.display = 'none';
+                    }
                   }}
                   style={{ width: '80px', height: '120px', objectFit: 'cover', borderRadius: 'var(--radius-sm)', flexShrink: 0 }}
                 />

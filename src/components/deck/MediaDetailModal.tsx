@@ -32,7 +32,7 @@ import { Markdown } from '../common/Markdown';
 import { Media, WatchStatus } from '../../types';
 import { useAISummary } from '../../hooks/useAISummary';
 import { api } from '../../services/api';
-import { getPosterSrc } from '../../utils/poster';
+import { getPosterSrc, getPosterCandidates } from '../../utils/poster';
 import { toast } from '../common/Toast';
 import {
   Star,
@@ -301,7 +301,17 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 src={posterSrc}
                 alt={media.title}
                 onError={(e) => {
-                  e.currentTarget.style.display = 'none';
+                  // Advance down the candidate chain (local asset -> remote)
+                  // before hiding - a failing asset-protocol URL must not
+                  // kill the poster when the CDN URL can still render.
+                  const candidates = getPosterCandidates(media);
+                  const current = e.currentTarget.src;
+                  const next = candidates.find((c) => c !== current && !current.endsWith(c));
+                  if (next) {
+                    e.currentTarget.src = next;
+                  } else {
+                    e.currentTarget.style.display = 'none';
+                  }
                 }}
                 style={{
                   width: '130px',
