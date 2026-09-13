@@ -1,21 +1,9 @@
-﻿/**
- * settings/SettingsView.tsx
- * ----------------------------------------------------------------------------
- * WHAT: Settings suite: theme picker, Local AI inference preferences
- *       (temperature / GPU offload - persisted to SQLite), vault bundle export
- *       & import (database + Director Suite localStorage data), developer
- *       links, and the GitHub-release updater UI with live install progress.
- *
- * PERSISTENCE: AI settings load once from `get_app_settings` and every change
- *       is debounce-saved through `save_app_settings`. Tabs whose features are
- *       not implemented yet say so honestly instead of claiming auto-save.
- *
- * USES:    services/api.ts (settings + updates), types/index.ts,
- *          common/Button.tsx, common/Toast.tsx (toast singleton),
- *          version.json.
- * USED BY: App.tsx.
+/**
+ * File Purpose: Settings workspace configuring luxury dark themes, local AI parameters, vault backup bundles, and application updates.
+ * Communication Matrix: Rendered in App.tsx; invokes api.getAppSettings, api.saveAppSettings, api.checkForUpdates, and exportVaultBundle.
  */
-import React, { useState } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { ThemeName, AppSettings } from '../../types';
 import { Button } from '../common/Button';
 import {
@@ -37,42 +25,43 @@ import {
   exportVaultBundle,
   importVaultBundle,
 } from '../../services/api';
-
 import { AppUpdateInfo } from '../../types';
 import versionData from '../../../version.json';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { toast } from '../common/Toast';
 
 interface SettingsViewProps {
-  /** Currently active theme name. */
   currentTheme: ThemeName;
-  /** Switch the global theme (owned by App/useTheme). */
   onThemeChange: (theme: ThemeName) => void;
 }
 
-/** Debounce window (ms) for persisting slider-driven setting changes. */
 const SETTINGS_SAVE_DEBOUNCE_MS = 400;
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   currentTheme,
   onThemeChange,
 }) => {
-  /** Below this width the left nav collapses to a 56px icon rail. */
   const isCompactNav = useMediaQuery('(max-width: 720px)');
   const [activeTab, setActiveTab] = useState<
     'general' | 'ai' | 'scraper' | 'director' | 'storage' | 'data' | 'developer' | 'updates'
   >('general');
-
-  // AI settings - hydrated from SQLite on mount, debounce-persisted on change
-  /** Generation temperature fed into every inference request. */
   const [temperature, setTemperature] = useState<number>(0.7);
-  /** GPU layer offload strategy ('gpu_auto' | 'cpu_only'). */
   const [offloadMode, setOffloadMode] = useState<string>('gpu_auto');
-  /** Pending save timer ref for debounced persistence. */
-  const saveTimerRef = React.useRef<number | null>(null);
+  const [omdbApiKeyDraft, setOmdbApiKeyDraft] = useState<string>('');
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState<boolean>(false);
+  const [installProgress, setInstallProgress] = useState<number>(0);
+  const [installSpeed, setInstallSpeed] = useState<string>('0.0');
+  const [installStatusText, setInstallStatusText] = useState<string>('Downloading installer...');
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // Hydrate persisted settings once on mount.
-  React.useEffect(() => {
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingPatchRef = useRef<Partial<AppSettings>>({});
+  const omdbKeySavedRef = useRef<string>('');
+
+  useEffect(() => {
     let cancelled = false;
     api
       .getAppSettings()
@@ -91,20 +80,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     };
   }, []);
 
-  /** Pending patch accumulated across rapid changes; flushed on debounce OR unmount. */
-  const pendingPatchRef = React.useRef<Partial<AppSettings>>({});
-
-  // OMDb enrichment key - hydrated with the rest of settings, committed on blur
-  /** Draft text for the OMDb API key input. */
-  const [omdbApiKeyDraft, setOmdbApiKeyDraft] = React.useState<string>('');
-  /** The last value known to be persisted (avoids redundant saves). */
-  const omdbKeySavedRef = React.useRef<string>('');
-
-  /**
-   * Debounce-persist a partial settings patch to SQLite. Sliders fire many
-   * change events; patches MERGE into the pending set and the last flush
-   * within the window hits the backend once (backend also merges server-side).
-   */
   const persistAiSettings = (patch: Partial<AppSettings>) => {
     pendingPatchRef.current = { ...pendingPatchRef.current, ...patch };
     if (saveTimerRef.current !== null) {
@@ -119,7 +94,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     saveTimerRef.current = timer;
   };
 
-  /** Immediately send any patch still waiting on the debounce timer. */
   const flushPendingSettings = () => {
     if (saveTimerRef.current !== null) {
       window.clearTimeout(saveTimerRef.current);
@@ -131,7 +105,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     api.saveAppSettings(toSave).catch((err) => console.warn('[Settings Flush]', err));
   };
 
-  /** Commit the OMDb key on blur/Enter - immediate save, no debounce. */
   const commitOmdbApiKey = () => {
     const trimmed = omdbApiKeyDraft.trim();
     if (trimmed === omdbKeySavedRef.current) return;
@@ -143,26 +116,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       .catch((err) => console.warn('[OMDb Key Save]', err));
   };
 
-  // App Update Checker State
-  /** Latest GitHub release info (null until first check). */
-  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
-  /** True while the release check request is in flight. */
-  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
-  /** Last update-check/install error message. */
-  const [updateError, setUpdateError] = useState<string | null>(null);
-
-  // App Installer Live Streaming State
-  /** True while the installer downloads (button spinner). */
-  const [isInstallingUpdate, setIsInstallingUpdate] = useState<boolean>(false);
-  /** Installer download percentage 0-100. */
-  const [installProgress, setInstallProgress] = useState<number>(0);
-  /** Installer download speed string (MB/s). */
-  const [installSpeed, setInstallSpeed] = useState<string>('0.0');
-  /** Human status line under the install progress bar. */
-  const [installStatusText, setInstallStatusText] = useState<string>('Downloading installer...');
-
-  // Installer download progress events (disposed-flag guards the listen race)
-  React.useEffect(() => {
+  useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
     if (isTauri()) {
@@ -192,8 +146,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     return () => {
       disposed = true;
       if (unlisten) unlisten();
-      // FLUSH (not discard) any debounced patch so a slider nudge followed
-      // immediately by tab-switch is never lost.
       flushPendingSettings();
     };
   }, []);
@@ -219,7 +171,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const filename = exeAsset ? exeAsset.name : `CineVault_${updateInfo.latestVersion}_Setup.exe`;
 
     if (!exeAsset) {
-      // Fallback: open release page in browser
       window.open(updateInfo.releaseUrl, '_blank');
       return;
     }
@@ -231,22 +182,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUpdateError(null);
 
     try {
-      // Digest (when GitHub published one) is verified fail-closed backend-side.
       await api.downloadAndInstallUpdate(downloadUrl, filename, exeAsset?.digest || '');
-      // Success normally ends with the backend exiting the process to hand
-      // over to the installer; reaching here means it returned without exit.
       setInstallStatusText('Installer launched - CineVault will close to complete setup.');
     } catch (err: any) {
       console.error('[Install Update Error]', err);
       setUpdateError(err?.message || 'Failed to download or launch update installer.');
     } finally {
-      // Never leave the button spinning if the backend returns without exit.
       setIsInstallingUpdate(false);
     }
   };
-
-  // Status message
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const showStatus = (msg: string) => {
     setStatusMessage(msg);
@@ -296,16 +240,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     input.click();
   };
 
-  /** Escape one RFC-4180 CSV cell: quote-wrapped, doubled inner quotes. */
   const csvCell = (value: string | number | undefined): string => {
     const raw = value === undefined || value === null ? '' : String(value);
     return `"${raw.replace(/"/g, '""')}"`;
   };
 
-  /**
-   * Export the vault as CSV (spreadsheet / Letterboxd-import friendly):
-   * Title, Year, Directors, your Rating, Watched date, Review notes.
-   */
   const handleExportCsv = async () => {
     try {
       const media = await api.getAllMedia();
@@ -320,7 +259,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           csvCell((m.reviewNotes ?? '').replace(/\r?\n/g, ' ')),
         ].join(',')
       );
-      // UTF-8 BOM: without it Excel on Windows mangles non-ASCII titles.
       const csv = `\uFEFF${header}\n${lines.join('\n')}\n`;
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -348,7 +286,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   return (
     <div style={{ display: 'flex', gap: isCompactNav ? '16px' : '24px', minHeight: '520px', minWidth: 0 }}>
-      {/* Left Vertical Sub-Nav (Linear Style) - icon rail when narrow */}
       <div
         style={{
           width: isCompactNav ? '56px' : '210px',
