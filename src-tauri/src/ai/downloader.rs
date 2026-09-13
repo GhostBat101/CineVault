@@ -1,22 +1,6 @@
-﻿//! ai/downloader.rs
-//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//! WHAT: Resilient GGUF model downloader. Streams weights to a `.part` temp
-//!   file, hashes content WHILE downloading, verifies SHA-256 (fail-closed)
-//!   and only then atomically renames into the Model Vault.
-//!
-//! SAFETY PROPERTIES:
-//!   - Hash verification is STREAMED (constant memory; no whole-file read).
-//!   - Fresh downloads are verified too - a cleanly-truncated body fails.
-//!   - The final model filename appears on disk only via atomic rename of the
-//!   fully-verified .part file; interrupted attempts never leave a file that
-//!   could later pass an existence check.
-//!   - Concurrency: a module-level `IN_FLIGHT` registry (keyed by filename)
-//!   rejects a second download of the same model while one is running; the
-//!   caller sees `DOWNLOAD_IN_PROGRESS: <file>` instead of racing byte writes.
-//!
-//! USES:    reqwest (stream), sha2, tokio/fs, logger.
-//! USED BY: src-tauri/src/commands/mod.rs (download_ai_model,
-//!   generate_ai_summary first-use auto-download).
+//! GGUF model asset downloader.
+//! Purpose: Downloads, streams, and verifies SHA-256 integrity for local AI models into the Model Vault.
+//! Communication Matrix: Invoked by commands::ai::download_ai_model; interfaces with tauri runtime for download progress events.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -110,23 +94,8 @@ impl ModelDownloader {
             .build();
 
         if let Ok(client) = client {
-            // Probe 1: huggingface.co (the actual download host).
             if let Ok(resp) = client.head("https://huggingface.co").send().await {
                 if resp.status().is_success() || resp.status().is_redirection() {
-                    return true;
-                }
-            }
-            // Probe 2: cloudflare 1.1.1.1 - answers HEAD with a 301 redirect,
-            // which still proves DNS + TCP + TLS all work.
-            if let Ok(resp) = client.head("https://1.1.1.1").send().await {
-                if resp.status().is_success() || resp.status().is_redirection() {
-                    return true;
-                }
-            }
-            // Probe 3: google generate_204 - connectivity checker that
-            // responds with exactly 204 No Content when reachable.
-            if let Ok(resp) = client.head("https://www.google.com/generate_204").send().await {
-                if resp.status().as_u16() == 204 {
                     return true;
                 }
             }
