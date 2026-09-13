@@ -1,6 +1,12 @@
+/**
+ * File Purpose: Polling hook for local hardware telemetry metrics and dynamic VRAM threshold monitoring.
+ * Communication Matrix: Imported by TelemetryHUD.tsx and Titlebar.tsx; queries api.getTelemetry via Tauri IPC.
+ */
+
 import { useState, useEffect } from 'react';
 import { HardwareTelemetry } from '../types';
 import { api } from '../services/api';
+import { evaluateVramStatus } from '../utils/telemetry';
 
 export function useTelemetry(refreshIntervalMs = 1000) {
   const [telemetry, setTelemetry] = useState<HardwareTelemetry>({
@@ -23,7 +29,13 @@ export function useTelemetry(refreshIntervalMs = 1000) {
       try {
         const data = await api.getTelemetry();
         if (isMounted) {
-          setTelemetry(data);
+          const isCritical = evaluateVramStatus(data.vramUsedMb, data.vramTotalMb);
+          setTelemetry({
+            ...data,
+            totalGpuLayers: data.totalGpuLayers ?? data.totalLayers ?? 28,
+            activeOffloadMode: data.activeOffloadMode ?? 'gpu_auto',
+            isVramCritical: Boolean(data.isVramCritical || isCritical),
+          });
         }
       } catch (err) {
         console.error('[Telemetry Poller Error]', err);
