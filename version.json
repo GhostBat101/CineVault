@@ -1,8 +1,8 @@
 {
-  "version": "0.3.21",
-  "build": 42,
-  "lastUpdated": "2026-08-16T22:14:00Z",
-  "notes": "CI Rust Thread Safety Fix: resolved non-Send ElementRef crossing await boundary in scraper module; guarantees 100% clean compilation on GitHub Actions Windows CI runner."
+  "version": "0.3.22",
+  "build": 43,
+  "lastUpdated": "2026-09-13T15:03:00Z",
+  "notes": "Fix production bugs: enforce SHA-256 update verification, add S3 update host, create SQLite Director migrations, add Cinematography Cues UI, fix sidebar shortcut hijacking."
 }
 
 
