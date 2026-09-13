@@ -1,20 +1,8 @@
-﻿/**
- * director/LoreNotesView.tsx
- * ----------------------------------------------------------------------------
- * WHAT: Lore & continuity workspace: category-filtered note cards plus a
- *       creation modal and the Local AI Continuity Audit modal that checks a
- *       pasted scene draft against all recorded lore.
- *
- * PERSISTENCE CONTRACT (load-before-save):
- *   Notes live under `cinevault_lore_notes_<mediaId>` (or `_global` when no
- *   title is active). State hydrates for the CURRENT key before any write;
- *   writes are suppressed until `loadedKeyRef` matches the active key. This -
- *   combined with the parent remount key - prevents writing title A's notes
- *   into title B's storage on title switch.
- *
- * USES:    types/index.ts, common/{Button,Modal}.tsx, hooks/useAISummary.ts.
- * USED BY: DirectorSuite.tsx (rendered keyed by media id).
+/**
+ * File Purpose: Lore notes workspace organizing world rules, relics, factions, and managing local AI continuity audits.
+ * Communication Matrix: Rendered in DirectorSuite.tsx; invokes useAISummary hook and persists to SQLite/localStorage.
  */
+
 import React, { useState, useEffect, useRef } from 'react';
 import { LoreNote, Media } from '../../types';
 import { Button } from '../common/Button';
@@ -22,13 +10,12 @@ import { Modal } from '../common/Modal';
 import { Markdown } from '../common/Markdown';
 import { Plus, Sparkles, BookOpen, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { useAISummary } from '../../hooks/useAISummary';
+import { api, isTauri } from '../../services/api';
 
 interface LoreNotesViewProps {
-  /** Active media entity; null stores under the `_global` key. */
   media: Media | null;
 }
 
-/** Canonical note categories offered by the filter pills + create form. */
 const CATEGORIES = [
   'World Rules',
   'Relics & Tech',
@@ -37,7 +24,8 @@ const CATEGORIES = [
   'Magic & Lore',
 ] as const;
 
-/** Read a JSON array out of localStorage with defensive failure handling. */
+const LORE_CONTEXT_BUDGET = 4000;
+
 function loadJsonArray<T>(key: string): T[] {
   try {
     const stored = localStorage.getItem(key);
@@ -47,57 +35,22 @@ function loadJsonArray<T>(key: string): T[] {
   }
 }
 
-export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
-  media,
-}) => {
-  /** Storage key derived from the active title (or global fallback). */
+export const LoreNotesView: React.FC<LoreNotesViewProps> = ({ media }) => {
   const storageKey = media ? `cinevault_lore_notes_${media.id}` : 'cinevault_lore_notes_global';
 
-  /** Notes currently in state (hydrated from `storageKey`). */
   const [notes, setNotes] = useState<LoreNote[]>(() => loadJsonArray<LoreNote>(storageKey));
-  /**
-   * The storage key whose data is CURRENTLY loaded into state. Writes are
-   * suppressed while this differs from `storageKey` (load-before-save).
-   */
   const loadedKeyRef = useRef<string>(storageKey);
 
-  // Hydrate state whenever the active title (and therefore key) changes.
-  useEffect(() => {
-    setNotes(loadJsonArray<LoreNote>(storageKey));
-    loadedKeyRef.current = storageKey;
-  }, [storageKey]);
-
-  // Persist ONLY once the owning key matches the loaded one.
-  useEffect(() => {
-    if (loadedKeyRef.current !== storageKey) return;
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(notes));
-    } catch (e) {
-      console.warn('Failed to persist lore notes:', e);
-    }
-  }, [notes, storageKey]);
-
-  /** Selected category filter ('all' shows everything). */
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  /** Whether the create/edit-note modal is open. */
   const [isAddNoteOpen, setIsAddNoteOpen] = useState(false);
-  /** Note currently being edited; null means the modal creates a new note. */
   const [editingNote, setEditingNote] = useState<LoreNote | null>(null);
 
-  // New Note Form State
-  /** Draft note title. */
   const [newTitle, setNewTitle] = useState('');
-  /** Draft note category. */
   const [newCategory, setNewCategory] = useState<string>('World Rules');
-  /** Draft markdown content. */
   const [newContent, setNewContent] = useState('');
-  /** Draft comma-separated tags string. */
   const [newTags, setNewTags] = useState('');
 
-  // AI Continuity Audit State
-  /** Whether the audit modal is open. */
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
-  /** Pasted scene draft to audit against the recorded lore. */
   const [auditScenePrompt, setAuditScenePrompt] = useState('');
   const {
     summary: auditResult,
@@ -106,15 +59,49 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
     generateSummary: runAudit,
   } = useAISummary();
 
-  /** Notes visible under the current category filter. */
+  useEffect(() => {
+    let isCurrent = true;
+    const loadData = async () => {
+      if (media && isTauri()) {
+        try {
+          const dbNotes = await api.getLoreNotes(media.id);
+          if (isCurrent && Array.isArray(dbNotes) && dbNotes.length > 0) {
+            setNotes(dbNotes);
+            loadedKeyRef.current = storageKey;
+            return;
+          }
+        } catch {
+        }
+      }
+      if (isCurrent) {
+        setNotes(loadJsonArray<LoreNote>(storageKey));
+        loadedKeyRef.current = storageKey;
+      }
+    };
+    loadData();
+    return () => {
+      isCurrent = false;
+    };
+  }, [storageKey, media]);
+
+  useEffect(() => {
+    if (loadedKeyRef.current !== storageKey) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(notes));
+    } catch (e) {
+      console.warn('Failed to persist lore notes:', e);
+    }
+    if (media && isTauri()) {
+      api.saveLoreNotes(media.id, notes).catch(() => {});
+    }
+  }, [notes, storageKey, media]);
+
   const filteredNotes =
     selectedCategory === 'all' ? notes : notes.filter((n) => n.category === selectedCategory);
 
-  /** Create a new note (UUID id) or persist edits to an existing one. */
   const handleCreateNote = () => {
     if (!newTitle.trim() || !newContent.trim()) return;
 
-    // Trim, strip any leading '#' markers users type ("#Magic"), drop empties.
     const tags = [
       ...new Set(
         newTags
@@ -125,7 +112,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
     ];
 
     if (editingNote) {
-      // Update-in-place preserving identity + creation timestamp.
       setNotes((prev) =>
         prev.map((n) =>
           n.id === editingNote.id
@@ -162,45 +148,42 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
     setIsAddNoteOpen(false);
   };
 
-  /** Open the modal pre-filled with the note's values in edit mode. */
   const handleEditNote = (note: LoreNote) => {
     setEditingNote(note);
     setNewTitle(note.title);
     setNewCategory(note.category);
     setNewContent(note.contentMarkdown);
-    // Legacy/foreign notes may carry a null/undefined tags array.
     setNewTags((note.tags || []).join(', '));
     setIsAddNoteOpen(true);
   };
 
-  /** Delete a note after explicit user confirmation. */
   const handleDeleteNote = (note: LoreNote) => {
     if (!window.confirm(`Delete lore note "${note.title}"? This cannot be undone.`)) return;
     setNotes((prev) => prev.filter((n) => n.id !== note.id));
   };
 
-  /** Hard cap on lore context fed into the audit prompt (prompt-budget guard). */
-  const LORE_CONTEXT_BUDGET = 4000;
-
-  /** Run the AI continuity audit against ALL notes for the current title. */
   const handleRunContinuityAudit = () => {
     if (!auditScenePrompt.trim()) return;
     const assembled = notes
       .map((n) => `[${n.category}] ${n.title}: ${n.contentMarkdown}`)
       .join('\n\n');
-    // Cap the assembled context so huge vaults cannot blow the prompt budget.
     const loreContext =
       assembled.length > LORE_CONTEXT_BUDGET
         ? `${assembled.slice(0, LORE_CONTEXT_BUDGET)}\n[truncated]`
         : assembled;
 
     const prompt = `Perform a screenplay continuity audit.\n\nTitle: ${media?.title || 'Untitled Project'}\n\nEstablished Lore Rules:\n${loreContext || 'None specified.'}\n\nProposed Scene / Draft Action:\n${auditScenePrompt}\n\nCheck for plot holes, world rule violations, and logical contradictions.`;
-    runAudit(prompt);
+    runAudit({
+      prompt,
+      title: media?.title,
+      genres: media?.genres,
+      synopsis: media?.synopsis,
+      mediaType: media?.mediaType,
+    });
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Header Info */}
       <div
         className="glass-panel"
         style={{
@@ -251,7 +234,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
             size="sm"
             icon={<Plus size={14} />}
             onClick={() => {
-              // Ensure CREATE mode (never inherit a stale editing target).
               setEditingNote(null);
               setNewTitle('');
               setNewCategory('World Rules');
@@ -265,7 +247,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
         </div>
       </div>
 
-      {/* Category Filter Pills */}
       <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
         {(['all', ...CATEGORIES] as string[]).map((cat) => {
           const count = cat === 'all' ? notes.length : notes.filter((n) => n.category === cat).length;
@@ -294,7 +275,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
         })}
       </div>
 
-      {/* Notes Grid or Empty State - copy distinguishes "no notes" vs "filter empty" */}
       {filteredNotes.length === 0 ? (
         <div
           className="glass-panel"
@@ -360,7 +340,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
                     {note.category}
                   </span>
 
-                  {/* Card Actions: edit / delete */}
                   <div style={{ display: 'flex', gap: '4px' }}>
                     <button
                       type="button"
@@ -411,7 +390,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
                   {note.title}
                 </h3>
 
-                {/* Markdown-rendered content (safe subset renderer, no raw HTML) */}
                 <Markdown
                   source={note.contentMarkdown}
                   style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}
@@ -422,7 +400,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)' }}>
                   {note.tags.map((tag, tagIndex) => (
                     <span
-                      // Index suffix avoids duplicate keys when legacy data repeats tags
                       key={`${tag}_${tagIndex}`}
                       style={{
                         fontSize: '10px',
@@ -443,7 +420,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
         </div>
       )}
 
-      {/* New / Edit Lore Note Modal */}
       <Modal
         isOpen={isAddNoteOpen}
         onClose={() => {
@@ -561,7 +537,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
         </div>
       </Modal>
 
-      {/* AI Continuity Audit Modal */}
       <Modal
         isOpen={isAuditModalOpen}
         onClose={() => setIsAuditModalOpen(false)}
@@ -615,7 +590,6 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({
                 gap: '8px',
               }}
             >
-              {/* Lucide icon instead of a text glyph (mojibake-proof). */}
               <AlertTriangle size={14} style={{ flexShrink: 0 }} />
               <span>{auditError}</span>
             </div>
