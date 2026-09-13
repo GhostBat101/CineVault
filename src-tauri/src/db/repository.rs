@@ -7,7 +7,6 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Mutex;
 
-pub use crate::db::director::*;
 pub use crate::db::migrations::*;
 pub use crate::db::models::*;
 
