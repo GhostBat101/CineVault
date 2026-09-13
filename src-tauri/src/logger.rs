@@ -1,38 +1,6 @@
-﻿//! logger.rs
-//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//! WHAT: Minimal process-wide file + stdout logger. Writes timestamped lines
-//!   to `<logs_dir>/cinevault.log` via [`Logger::{init, info, warn,
-//!   error, log}`], rotating the active file to `cinevault.1.log` when
-//!   it exceeds [`MAX_LOG_FILE_BYTES`].
-//!
-//! DESIGN NOTES:
-//!   - Static GLOBAL_LOGGER (`Mutex<Option<Logger>>`) holds only the log
-//!   file path; every write opens the file in append mode, writes one
-//!   line, explicitly flushes and closes it. Entries therefore hit disk
-//!   immediately - there is no lingering handle or in-process buffer -
-//!   which is what makes a graceful `window.close()` shutdown safe.
-//!   - Rotation is size-based with ONE backup slot: once the active file
-//!   passes the limit it is renamed to `<stem>.1.log` and the next write
-//!   recreates a fresh active log. The previous backup is removed first
-//!   because Windows renames fail onto existing files.
-//!   - Rotation check + write happen under a single lock acquisition, so two
-//!   threads can never race a rename against an open append handle.
-//!   - DEADLOCK RULE: `rotate_if_oversized` runs WHILE `Logger::log` holds
-//!   GLOBAL_LOGGER's non-reentrant mutex. It must therefore NEVER call back
-//!   into `Logger::{warn,error,...}` - those re-enter `log` and would block
-//!   forever on the same lock (observed on Windows when AV scanners hold the
-//!   log file during rotation). Failure branches inside rotation use
-//!   `eprintln!` instead; they bypass the mutex entirely and cannot deadlock.
-//!   - Timestamps use Howard Hinnant's civil-from-days conversion (leap-day
-//!   exact). The helper is duplicated from db::repository::iso_utc_now
-//!   instead of shared because this logger is a leaf module that must not
-//!   depend on the database layer.
-//!
-//! USES:    std only (fs, io, sync, time). No external crates.
-//! USED BY: src-tauri/src/lib.rs (boot logging),
-//!   src-tauri/src/db/repository.rs (migration warnings),
-//!   src-tauri/src/commands/mod.rs, scraper/imdb.rs,
-//!   ai/{engine,downloader}.rs via `crate::logger::Logger::*`.
+//! Process-wide file and stdout logger.
+//! Purpose: Provides timestamped log writing and size-based rotation into the local logs directory.
+//! Communication Matrix: Invoked across backend modules via crate::logger::Logger::{info, warn, error, log}.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -40,9 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Rotate the active log once it grows past this size (5 MiB).
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
-/// Backup slot suffix: `<stem>.1.log`. Older backups are removed, not chained.
 const ROTATION_SUFFIX: &str = "1";
 
 pub struct Logger {
@@ -62,7 +28,7 @@ impl Logger {
         {
             let mut global = GLOBAL_LOGGER.lock().map_err(|e| e.to_string())?;
             *global = Some(logger);
-        } // Lock is explicitly dropped here to prevent deadlocks!
+        }
 
         Self::log("INFO", "CineVault Logging System initialized successfully.");
         Ok(())
@@ -72,7 +38,6 @@ impl Logger {
         let timestamp = format_utc_timestamp();
         let formatted = format!("[{}] [{}] {}\n", timestamp, level, message);
 
-        // Poison tolerance: a panic mid-write must never wedge all future logs.
         let guard = GLOBAL_LOGGER
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -81,7 +46,6 @@ impl Logger {
             logger.rotate_if_oversized();
             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&logger.log_path) {
                 let _ = file.write_all(formatted.as_bytes());
-                // Flush now: guarantees immediacy regardless of buffering.
                 let _ = file.flush();
             }
         }
@@ -90,37 +54,26 @@ impl Logger {
         print!("{}", formatted);
     }
 
-    /// Shift the active log aside when it exceeds [`MAX_LOG_FILE_BYTES`].
-    /// Best-effort: any filesystem error silently keeps appending to the old file.
-    ///
-    /// Called with GLOBAL_LOGGER already locked by `Logger::log`, so the
-    /// failure branches below MUST use `eprintln!` - routing through
-    /// `Logger::warn` would re-enter `log` and self-deadlock on the
-    /// non-reentrant mutex.
     fn rotate_if_oversized(&self) {
         let oversized = fs::metadata(&self.log_path)
             .map(|meta| meta.len() > MAX_LOG_FILE_BYTES)
-            .unwrap_or(false); // Missing file -> nothing to rotate yet.
+            .unwrap_or(false);
 
         if !oversized {
             return;
         }
 
         let backup_path = self.backup_log_path();
-        // Single backup generation: remove stale backup so rename succeeds on Windows.
         if let Err(e) = fs::remove_file(&backup_path) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 eprintln!("[cinevault][warn] Log rotation: could not clear backup {:?}: {}", backup_path, e);
             }
         }
-        // A locked file (external viewer / AV scanner) must not abort logging -
-        // warn and keep appending to the oversized file until the next tick.
         if let Err(e) = fs::rename(&self.log_path, &backup_path) {
             eprintln!("[cinevault][warn] Log rotation rename failed (file may be locked): {}", e);
         }
     }
 
-    /// Path of the rotated backup: same directory, `<stem>.<ROTATION_SUFFIX>.log`.
     fn backup_log_path(&self) -> PathBuf {
         let stem = self
             .log_path
@@ -146,13 +99,6 @@ impl Logger {
     }
 }
 
-/// Current UTC time formatted as `YYYY-MM-DD HH:MM:SS UTC`.
-///
-/// Howard Hinnant's civil-from-days algorithm (identical math to
-/// db::repository::iso_utc_now): pure integer division converts
-/// days-since-epoch to Y/M/D correctly across Gregorian leap years,
-/// including Feb 29 and century non-leap years. Replaces the previous
-/// subtract-one-month-at-a-time loop whose boundary handling was wrong.
 fn format_utc_timestamp() -> String {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
