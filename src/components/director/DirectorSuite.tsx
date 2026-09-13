@@ -1,57 +1,48 @@
-﻿/**
- * director/DirectorSuite.tsx
- * ------------------------------------------------------------
- * WHAT: Shell for the Director's Suite mode: sub-tab navigation between the
- *       Beat Sheet engine, Character Tension Matrix, and Lore Notes views,
- *       plus the "Active Title" dropdown for switching the directing target.
- *
- * REMOUNT GUARANTEE: App.tsx already keys this component by media id; each
- *       sub-view below is keyed AGAIN by media id so switching titles always
- *       remounts them and reloads their own persisted state (prevents the
- *       historical cross-title data corruption in localStorage-backed views).
- *
- * USES:    types/index.ts, director/{BeatSheetView,TensionMatrixView,LoreNotesView}.tsx.
- * USED BY: App.tsx.
+/**
+ * File Purpose: Director Suite workspace shell orchestrating sub-tab navigation between beats, character matrix, lore notes, and cinematography cues.
+ * Communication Matrix: Rendered in App.tsx; imports BeatSheetView, TensionMatrixView, LoreNotesView, CinematographyCuesView.
  */
+
 import React, { useState } from 'react';
 import { Media } from '../../types';
 import { BeatSheetView } from './BeatSheetView';
 import { TensionMatrixView } from './TensionMatrixView';
 import { LoreNotesView } from './LoreNotesView';
-import { ListTree, Users, BookOpen, Clapperboard } from 'lucide-react';
+import { CinematographyCuesView } from './CinematographyCuesView';
+import { ListTree, Users, BookOpen, Camera, Clapperboard } from 'lucide-react';
 
 interface DirectorSuiteProps {
-  /** Currently selected media entity (directing target); null = none chosen. */
   media: Media | null;
-  /** Full catalog for the title switcher dropdown. */
   mediaList?: Media[];
-  /** Notify parent when a different title is selected. */
   onSelectMedia?: (media: Media) => void;
 }
 
-/** Sub-tab definitions rendered data-driven (single source of truth). */
 const SUB_TABS = [
-  { id: 'beats', label: 'Save the Cat! 15 Beats', icon: ListTree },
+  { id: 'beats', label: 'Beat Sheet Engine', icon: ListTree },
   { id: 'tension-matrix', label: 'Character Tension Matrix', icon: Users },
   { id: 'lore-notes', label: 'Lore & Continuity Audits', icon: BookOpen },
+  { id: 'cinematography', label: 'Cinematography Cues', icon: Camera },
 ] as const;
 
 type SubTabId = (typeof SUB_TABS)[number]['id'];
+
+function setActiveTabSafe(
+  setter: React.Dispatch<React.SetStateAction<SubTabId>>,
+  id: SubTabId
+): void {
+  setter(id);
+}
 
 export const DirectorSuite: React.FC<DirectorSuiteProps> = ({
   media,
   mediaList = [],
   onSelectMedia,
 }) => {
-  /** Which sub-view is currently displayed. */
   const [activeSubTab, setActiveSubTab] = useState<SubTabId>('beats');
-
-  /** Stable identity for remount keys across title switches. */
   const mediaKey = media?.id ?? 'no-title';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Sub-navigation Tabs & Directing Context Switcher */}
       <div
         style={{
           display: 'flex',
@@ -94,7 +85,6 @@ export const DirectorSuite: React.FC<DirectorSuiteProps> = ({
           })}
         </div>
 
-        {/* Title Switcher Dropdown */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '4px 12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
           <Clapperboard size={15} color="var(--accent)" />
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -122,7 +112,6 @@ export const DirectorSuite: React.FC<DirectorSuiteProps> = ({
               textOverflow: 'ellipsis',
             }}
           >
-            {/* Placeholder option: selectable only when nothing is chosen yet */}
             <option value="">{media ? '-- Switch Title --' : '-- Select a Title to Direct --'}</option>
             {mediaList.map((m) => (
               <option key={m.id} value={m.id}>
@@ -133,7 +122,6 @@ export const DirectorSuite: React.FC<DirectorSuiteProps> = ({
         </div>
       </div>
 
-      {/* Empty-catalog guidance: without any titles there is nothing to direct */}
       {mediaList.length === 0 ? (
         <div
           className="glass-panel"
@@ -154,22 +142,12 @@ export const DirectorSuite: React.FC<DirectorSuiteProps> = ({
         </div>
       ) : (
         <>
-          {/* Active Sub-view Rendering.
-              key={mediaKey} forces a clean remount per title so every view's
-              load-before-save persistence pattern starts from ITS OWN data. */}
           {activeSubTab === 'beats' && <BeatSheetView key={`beats_${mediaKey}`} media={media} />}
           {activeSubTab === 'tension-matrix' && <TensionMatrixView key={`matrix_${mediaKey}`} media={media} />}
           {activeSubTab === 'lore-notes' && <LoreNotesView key={`lore_${mediaKey}`} media={media} />}
+          {activeSubTab === 'cinematography' && <CinematographyCuesView key={`cinema_${mediaKey}`} media={media} />}
         </>
       )}
     </div>
   );
 };
-
-/** Tiny helper keeping the map callback tidy while switching sub-tabs. */
-function setActiveTabSafe(
-  setter: React.Dispatch<React.SetStateAction<SubTabId>>,
-  id: SubTabId
-): void {
-  setter(id);
-}
