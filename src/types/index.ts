@@ -1,30 +1,6 @@
 /**
- * types/index.ts
- * ─────────────────────────────────────────────────────────────
- * WHAT: Single source of truth for every shared TypeScript type in the
- *       CineVault frontend. Mirrors the serde structs in src-tauri
- *       (all Tauri payloads are camelCase on the wire via
- *       `#[serde(rename_all = "camelCase")]`).
- *
- * USES:    Nothing (leaf module).
- * USED BY: services/api.ts, hooks/*.ts, components/** (imported everywhere).
- *
- * KEY EXPORTS:
- *   MediaType / WatchStatus / RoleType / ArcType / ImpactLevel /
- *     ThemeName / BeatSheetFramework - string unions constraining entity fields.
- *   Media          - core tracked-title entity (round-trips SQLite `media` table).
- *   Character      - Director's Suite cast member.
- *   StoryArc       - hierarchical narrative arc.
- *   Beat           - one Save-the-Cat! beat (id/name/act/percentage/content).
- *   BeatItem / BeatSheet - richer persisted sheet model (beats stored as JSON).
- *   RelationshipLink - directed tension edge between two characters (1-10 score).
- *   LoreNote       - world-building note with markdown content + tags.
- *   HardwareTelemetry - live CPU/RAM/VRAM snapshot from Rust telemetry module.
- *   ModelStatusItem / ModelVaultStatus - GGUF catalog entries + vault state.
- *   AppSettings    - persisted user settings schema (SQLite app_settings).
- *   AppUpdateAsset / AppUpdateInfo - GitHub release metadata for updater UI.
- *   ScrapedCastMember / ScrapedMedia - IMDb scraper output (camelCase, matches
- *     src-tauri/src/scraper/imdb.rs serde structs exactly).
+ * File Purpose: Authoritative TypeScript domain models, entity definitions, and IPC contracts for CineVault.
+ * Communication Matrix: Imported by services/api.ts, hooks, deck components, director components, and test suites.
  */
 
 export type MediaType = 'movie' | 'series' | 'anime' | 'book' | 'screenplay';
@@ -53,13 +29,9 @@ export interface Media {
   aiSummary?: string;
   aiModelUsed?: string;
   userStatus: WatchStatus;
-  /** Personal score 1-10 (user's own verdict - distinct from imdbRating). */
   userRating?: number;
-  /** Free-form personal review / notes. */
   reviewNotes?: string;
-  /** Favorite flag shown as a heart across the UI. */
   isFavorite?: boolean;
-  /** ISO date the item was marked completed. */
   watchedDate?: string;
   createdAt: string;
   updatedAt: string;
@@ -112,7 +84,7 @@ export interface BeatItem {
   description: string;
   userContent: string;
   sceneHeading?: string;
-  pacingTensionScore?: number; // 1-10
+  pacingTensionScore?: number;
 }
 
 export interface BeatSheet {
@@ -129,8 +101,8 @@ export interface BeatSheet {
 export interface RelationshipLink {
   sourceCharacterId: string;
   targetCharacterId: string;
-  relationshipType: string; // 'Allies', 'Rivals', 'Secret Betrayal', 'Unrequited Love', etc.
-  tensionScore: number; // 1-10
+  relationshipType: string;
+  tensionScore: number;
   notes?: string;
 }
 
@@ -152,6 +124,7 @@ export interface CinematographyCue {
   lensChoice?: string;
   aspectRatio?: string;
   audioThemeNotes?: string;
+  createdAt?: string;
 }
 
 export interface TimelineEvent {
@@ -183,18 +156,42 @@ export interface HardwareTelemetry {
   cpuUsagePercent: number;
   ramUsedMb: number;
   ramTotalMb: number;
+  ramPercent?: number;
   gpuName?: string;
   vramUsedMb: number;
   vramTotalMb: number;
-  isVramCritical: boolean; // Warning triggered if approaching 2GB
-  activeOffloadMode: 'gpu_auto' | 'cpu_only';
+  vramPercent?: number;
+  isVramCritical: boolean;
+  activeOffloadMode: 'gpu_auto' | 'cpu_only' | 'gpu_partial_cpu';
   gpuLayersOffloaded: number;
   totalGpuLayers: number;
+  totalLayers?: number;
+  timestamp?: string;
+}
+
+export interface InferenceParams {
+  prompt: string;
+  title?: string;
+  genres?: string[];
+  synopsis?: string;
+  mediaType?: string;
+  taskType?: string;
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+}
+
+export interface InferenceResult {
+  text: string;
+  tokensGenerated: number;
+  durationMs: number;
+  modelUsed: string;
 }
 
 export interface ModelStatusItem {
   id: string;
   name: string;
+  displayName?: string;
   parameterSize: string;
   quantization: string;
   fileSizeMb: number;
@@ -228,7 +225,6 @@ export interface AppSettings {
   telemetryRefreshMs: number;
   sidebarAutoCollapse: boolean;
   uiScaling: number;
-  /** OMDb API key (optional) - unlocks rating/runtime/genre enrichment during IMDb ingest. */
   omdbApiKey?: string;
 }
 
@@ -236,7 +232,6 @@ export interface AppUpdateAsset {
   name: string;
   size: number;
   browserDownloadUrl: string;
-  /** GitHub release sha256 digest ("sha256:..."), empty when the release omits it. */
   digest?: string;
 }
 
@@ -251,23 +246,12 @@ export interface AppUpdateInfo {
   assets: AppUpdateAsset[];
 }
 
-/**
- * One cast member extracted from IMDb.
- * Field names MUST stay identical to src-tauri/src/scraper/imdb.rs
- * `ScrapedCastMember` (serde rename_all = "camelCase").
- */
 export interface ScrapedCastMember {
   name: string;
   characterName: string | null;
   avatarUrl: string | null;
 }
 
-/**
- * Metadata returned by the `extract_imdb` Tauri command.
- * Field names MUST stay identical to src-tauri/src/scraper/imdb.rs
- * `ScrapedMedia` (serde rename_all = "camelCase"). Optional fields are
- * genuinely optional - the UI must render "unknown" instead of inventing values.
- */
 export interface ScrapedMedia {
   imdbId: string;
   title: string;
@@ -277,12 +261,9 @@ export interface ScrapedMedia {
   runtimeMinutes: number | null;
   imdbRating: number | null;
   posterUrl: string | null;
-  /** Backend-cached local copy of the poster (asset-protocol path), when download succeeded. */
   posterLocalPath: string | null;
   synopsis: string | null;
   genres: string[];
   directors: string[];
   castMembers: ScrapedCastMember[];
 }
-
-
