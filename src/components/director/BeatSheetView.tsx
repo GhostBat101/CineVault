@@ -1,23 +1,8 @@
-﻿/**
- * director/BeatSheetView.tsx
- * ----------------------------------------------------------------------------
- * WHAT: Multi-framework beat engine (Save the Cat! 15 beats / Classic
- *       Three-Act). Editable per-beat scene workspaces, completion progress
- *       bar, act filters, runtime/page-budget input, JSON export, and the
- *       Local AI Structure Assistant whose output is rendered in a dedicated
- *       panel ("Insert into beat" applies it).
- *
- * PERSISTENCE CONTRACT (load-before-save):
- *   The whole sheet ({beats, totalRuntimeMinutes}) lives under
- *   `cinevault_beats_<mediaId>` (or `_global` when no title is active). State
- *   hydrates for the CURRENT key before any write; writes are suppressed until
- *   `loadedKeyRef` matches the active key. Combined with the parent remount
- *   key this guarantees edits persist PER TITLE and never bleed across titles.
- *
- * USES:    types/index.ts, director/BeatCard.tsx, common/Button.tsx,
- *          hooks/useAISummary.ts.
- * USED BY: DirectorSuite.tsx (rendered keyed by media id).
+/**
+ * File Purpose: Multi-framework narrative beat sheet editor providing structural beat templates, timing math, export utilities, and AI assistance.
+ * Communication Matrix: Rendered in DirectorSuite.tsx; integrates with BeatCard.tsx, useAISummary.ts, and stores to localStorage/SQLite.
  */
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Beat, Media } from '../../types';
 import { BeatCard } from './BeatCard';
@@ -25,24 +10,30 @@ import { Button } from '../common/Button';
 import { Markdown } from '../common/Markdown';
 import { Sparkles, Download, Clock, FileText, Loader2, AlertTriangle } from 'lucide-react';
 import { useAISummary } from '../../hooks/useAISummary';
+import { api, isTauri } from '../../services/api';
 
 interface BeatSheetViewProps {
-  /** Active media entity; null stores under the `_global` key. */
   media: Media | null;
 }
 
-/** Structural frameworks available for a sheet. Mirrors the SDK catalog
- *  (packages/cinevault-sdk/src/beats.ts) - duplicated here until the workspace
- *  package is wired into the app's tsconfig include graph. */
-type Framework = 'save-the-cat' | 'three-act';
+type Framework = 'save-the-cat' | 'three-act' | 'dan-harmon' | 'heros-journey';
 
-/** Framework picker metadata for the dropdown. */
+interface PersistedBeatSheet {
+  version: 1;
+  framework?: Framework;
+  beats: Beat[];
+  totalRuntimeMinutes: number;
+}
+
+type AITarget = { kind: 'sheet'; label: string } | { kind: 'beat'; label: string; beatId: string } | null;
+
 const FRAMEWORKS: Array<{ id: Framework; label: string }> = [
   { id: 'save-the-cat', label: 'Save the Cat! (15 Beats)' },
   { id: 'three-act', label: 'Classic Three-Act (8 Beats)' },
+  { id: 'dan-harmon', label: 'Dan Harmon Story Circle (8 Beats)' },
+  { id: 'heros-journey', label: "Hero's Journey (12 Beats)" },
 ];
 
-/** One canonical Save-the-Cat! beat template row. */
 const DEFAULT_SAVE_THE_CAT_BEATS: Array<Omit<Beat, 'content' | 'isCompleted'>> = [
   { id: 'b1', name: 'Opening Image', act: 'Act 1', percentage: 1, order: 1, description: 'A snapshot of the protagonist’s current flawed world before the adventure.' },
   { id: 'b2', name: 'Theme Stated', act: 'Act 1', percentage: 5, order: 2, description: 'What the story is truly about underneath the external plot.' },
@@ -61,7 +52,6 @@ const DEFAULT_SAVE_THE_CAT_BEATS: Array<Omit<Beat, 'content' | 'isCompleted'>> =
   { id: 'b15', name: 'Final Image', act: 'Act 3', percentage: 100, order: 15, description: 'Visual proof of the internal and external transformation.' },
 ];
 
-/** Classic Three-Act template rows (mirrors SDK THREE_ACT_BEATS). */
 const THREE_ACT_BEATS: Array<Omit<Beat, 'content' | 'isCompleted'>> = [
   { id: 't1', name: 'Exposition & Status Quo', act: 'Act 1', percentage: 10, order: 1, description: 'Establish protagonist status quo and ordinary world.' },
   { id: 't2', name: 'Inciting Incident', act: 'Act 1', percentage: 15, order: 2, description: 'The event that sets the story in motion.' },
@@ -73,12 +63,41 @@ const THREE_ACT_BEATS: Array<Omit<Beat, 'content' | 'isCompleted'>> = [
   { id: 't8', name: 'Resolution', act: 'Act 3', percentage: 100, order: 8, description: 'Denouement and restoration of balance.' },
 ];
 
-/** Fresh deep-copied beat list for a framework - never share mutable arrays. */
+const DAN_HARMON_BEATS: Array<Omit<Beat, 'content' | 'isCompleted'>> = [
+  { id: 'dh1', name: 'You', act: 'Act 1', percentage: 0, order: 1, description: 'A character exists in their zone of comfort; the status quo is established.' },
+  { id: 'dh2', name: 'Need', act: 'Act 1', percentage: 12, order: 2, description: 'Something unsettles the comfort zone; the character wants or needs something.' },
+  { id: 'dh3', name: 'Go', act: 'Act 2', percentage: 25, order: 3, description: 'The character crosses into the unfamiliar situation, committing to change.' },
+  { id: 'dh4', name: 'Search', act: 'Act 2', percentage: 37, order: 4, description: 'Adapting to the unfamiliar world; trials reveal what the character lacks.' },
+  { id: 'dh5', name: 'Find', act: 'Act 2', percentage: 50, order: 5, description: 'The character gets what they wanted - at a cost they did not expect.' },
+  { id: 'dh6', name: 'Take', act: 'Act 3', percentage: 62, order: 6, description: 'The price is paid; the character loses what mattered most to gain their goal.' },
+  { id: 'dh7', name: 'Return', act: 'Act 3', percentage: 87, order: 7, description: 'The character returns to the familiar situation, forever changed by the journey.' },
+  { id: 'dh8', name: 'Change', act: 'Act 3', percentage: 100, order: 8, description: 'The transformation is proven; the character - and their world - is new.' },
+];
+
+const HEROES_JOURNEY_BEATS: Array<Omit<Beat, 'content' | 'isCompleted'>> = [
+  { id: 'hj1', name: 'Ordinary World', act: 'Act 1', percentage: 8, order: 1, description: "The hero's normal life and inner flaw are established before the adventure." },
+  { id: 'hj2', name: 'Call to Adventure', act: 'Act 1', percentage: 17, order: 2, description: 'A challenge or invitation disrupts the ordinary world.' },
+  { id: 'hj3', name: 'Refusal of the Call', act: 'Act 1', percentage: 25, order: 3, description: 'The hero hesitates, revealing fears and the stakes of leaving.' },
+  { id: 'hj4', name: 'Meeting the Mentor', act: 'Act 1', percentage: 33, order: 4, description: 'A guide grants the confidence, training, or gift needed to begin.' },
+  { id: 'hj5', name: 'Crossing the Threshold', act: 'Act 2', percentage: 42, order: 5, description: 'The hero commits to the special world; no turning back.' },
+  { id: 'hj6', name: 'Tests, Allies & Enemies', act: 'Act 2', percentage: 50, order: 6, description: 'The rules of the new world are learned through trials and alliances.' },
+  { id: 'hj7', name: 'Approach to the Inmost Cave', act: 'Act 2', percentage: 58, order: 7, description: 'Preparation for the central ordeal; tension peaks before the descent.' },
+  { id: 'hj8', name: 'The Ordeal', act: 'Act 2', percentage: 67, order: 8, description: 'The hero faces death or greatest fear and is reborn stronger.' },
+  { id: 'hj9', name: 'Reward (Seizing the Sword)', act: 'Act 2', percentage: 75, order: 9, description: 'The prize of survival is claimed - but danger lingers.' },
+  { id: 'hj10', name: 'The Road Back', act: 'Act 3', percentage: 83, order: 10, description: 'The chase back to the ordinary world; consequences pursue the hero.' },
+  { id: 'hj11', name: 'Resurrection', act: 'Act 3', percentage: 92, order: 11, description: 'The final test purifies the hero; the true climax of transformation.' },
+  { id: 'hj12', name: 'Return with the Elixir', act: 'Act 3', percentage: 100, order: 12, description: 'The hero returns home bearing something that restores the world.' },
+];
+
 function createDefaultBeats(framework: Framework): Beat[] {
-  const templates =
-    framework === 'three-act'
-      ? THREE_ACT_BEATS
-      : DEFAULT_SAVE_THE_CAT_BEATS;
+  let templates = DEFAULT_SAVE_THE_CAT_BEATS;
+  if (framework === 'three-act') {
+    templates = THREE_ACT_BEATS;
+  } else if (framework === 'dan-harmon') {
+    templates = DAN_HARMON_BEATS;
+  } else if (framework === 'heros-journey') {
+    templates = HEROES_JOURNEY_BEATS;
+  }
   return templates.map((template) => ({
     ...template,
     content: '',
@@ -86,15 +105,6 @@ function createDefaultBeats(framework: Framework): Beat[] {
   }));
 }
 
-/** Shape persisted under `cinevault_beats_<mediaId>`. */
-interface PersistedBeatSheet {
-  version: 1;
-  framework?: Framework;
-  beats: Beat[];
-  totalRuntimeMinutes: number;
-}
-
-/** Read a persisted sheet from localStorage with defensive failure handling. */
 function loadPersistedSheet(key: string): PersistedBeatSheet | null {
   try {
     const stored = localStorage.getItem(key);
@@ -107,55 +117,61 @@ function loadPersistedSheet(key: string): PersistedBeatSheet | null {
   }
 }
 
-/** Which generation target produced the current AI panel content. */
-type AITarget = { kind: 'sheet'; label: string } | { kind: 'beat'; label: string; beatId: string } | null;
-
-export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
-  media,
-}) => {
-  /** Storage key derived from the active title (or global fallback). */
+export const BeatSheetView: React.FC<BeatSheetViewProps> = ({ media }) => {
   const storageKey = media ? `cinevault_beats_${media.id}` : 'cinevault_beats_global';
 
-  // Hydrate once from THIS title's storage; defaults are always a fresh deep copy.
   const initialSheet = loadPersistedSheet(storageKey);
   const initialFramework = initialSheet?.framework ?? 'save-the-cat';
-  /** Structural framework for this sheet (persisted per title). */
   const [framework, setFramework] = useState<Framework>(initialFramework);
-  /** Beats currently in state (hydrated or default template). */
   const [beats, setBeats] = useState<Beat[]>(
     initialSheet ? initialSheet.beats : createDefaultBeats(initialFramework)
   );
-  /** Committed target runtime driving beat timestamps. */
   const [totalRuntimeMinutes, setTotalRuntimeMinutes] = useState<number>(
     initialSheet?.totalRuntimeMinutes ?? (media?.runtimeMinutes || 110)
   );
-  /**
-   * The storage key whose data is CURRENTLY loaded into state. Writes are
-   * suppressed while this differs from `storageKey` (load-before-save).
-   */
   const loadedKeyRef = useRef<string>(storageKey);
 
-  /** Text currently inside the runtime number input (free typing allowed). */
   const [runtimeDraft, setRuntimeDraft] = useState<string>(String(totalRuntimeMinutes));
-  /** Active act filter ('all' | 'Act 1' | 'Act 2' | 'Act 3'). */
   const [activeFilterAct, setActiveFilterAct] = useState<string>('all');
   const { isGenerating, summary: aiSummary, error: aiError, generateSummary, clearError } = useAISummary();
-  /** What the current AI panel content was generated for (sheet vs single beat). */
   const [aiTarget, setAiTarget] = useState<AITarget>(null);
 
-  // Hydrate state whenever the active title changes (defense-in-depth alongside remount keys).
   useEffect(() => {
-    const sheet = loadPersistedSheet(storageKey);
-    const sheetFramework = sheet?.framework ?? 'save-the-cat';
-    setFramework(sheetFramework);
-    setBeats(sheet ? sheet.beats : createDefaultBeats(sheetFramework));
-    setTotalRuntimeMinutes(sheet?.totalRuntimeMinutes ?? (media?.runtimeMinutes || 110));
-    loadedKeyRef.current = storageKey;
-    setRuntimeDraft(String(sheet?.totalRuntimeMinutes ?? (media?.runtimeMinutes || 110)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey]);
+    let isCurrent = true;
+    const loadData = async () => {
+      if (media && isTauri()) {
+        try {
+          const dbSheet = await api.getBeatSheet(media.id);
+          if (isCurrent && dbSheet && Array.isArray(dbSheet.beats) && dbSheet.beats.length > 0) {
+            const sheetFramework = (dbSheet.framework as Framework) || 'save-the-cat';
+            setFramework(sheetFramework);
+            setBeats(dbSheet.beats as any);
+            const runtime = media.runtimeMinutes || 110;
+            setTotalRuntimeMinutes(runtime);
+            setRuntimeDraft(String(runtime));
+            loadedKeyRef.current = storageKey;
+            return;
+          }
+        } catch {
+        }
+      }
+      if (isCurrent) {
+        const sheet = loadPersistedSheet(storageKey);
+        const sheetFramework = sheet?.framework ?? 'save-the-cat';
+        setFramework(sheetFramework);
+        setBeats(sheet ? sheet.beats : createDefaultBeats(sheetFramework));
+        const runtime = sheet?.totalRuntimeMinutes ?? (media?.runtimeMinutes || 110);
+        setTotalRuntimeMinutes(runtime);
+        setRuntimeDraft(String(runtime));
+        loadedKeyRef.current = storageKey;
+      }
+    };
+    loadData();
+    return () => {
+      isCurrent = false;
+    };
+  }, [storageKey, media]);
 
-  // Persist ONLY once the owning key matches the loaded one.
   useEffect(() => {
     if (loadedKeyRef.current !== storageKey) return;
     try {
@@ -164,13 +180,23 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
     } catch (e) {
       console.warn('Failed to persist beat sheet:', e);
     }
-  }, [beats, totalRuntimeMinutes, framework, storageKey]);
 
-  /** Completed beats count + guarded progress percent for the header bar. */
+    if (media && isTauri()) {
+      api.saveBeatSheet({
+        id: `sheet_${media.id}`,
+        mediaId: media.id,
+        framework: framework as any,
+        title: `${media.title || 'Feature'} Beat Sheet`,
+        beats: beats as any,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
+  }, [beats, totalRuntimeMinutes, framework, storageKey, media]);
+
   const completedCount = beats.filter((b) => b.isCompleted).length;
   const progressPercent = beats.length > 0 ? Math.round((completedCount / beats.length) * 100) : 0;
 
-  /** Commit a validated runtime value (clamped to 30-360) from the draft text. */
   const commitRuntimeDraft = () => {
     const parsed = Number(runtimeDraft);
     const valid = Number.isFinite(parsed) && parsed >= 30 && parsed <= 360 ? Math.round(parsed) : totalRuntimeMinutes;
@@ -178,32 +204,37 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
     setRuntimeDraft(String(valid));
   };
 
-  /** Replace/update one beat by id (single mutation entry point). */
   const handleUpdateBeat = (updatedBeat: Beat) => {
     setBeats((prev) => prev.map((b) => (b.id === updatedBeat.id ? updatedBeat : b)));
   };
 
-  /** Full-sheet AI structure breakdown. */
   const handleGenerateAllBeatsAI = () => {
     const title = media?.title || 'Original Feature';
     const synopsis = media?.synopsis || 'An escalating narrative canvas.';
-    // Prompt names the ACTIVE framework - never a hardcoded Save-the-Cat ask.
     const frameworkLabel = FRAMEWORKS.find((f) => f.id === framework)?.label ?? framework;
     clearError();
     setAiTarget({ kind: 'sheet', label: 'Full Sheet Structure Breakdown' });
-    generateSummary(`Generate a complete ${frameworkLabel} beat breakdown for "${title}". Synopsis: ${synopsis}`);
+    generateSummary({
+      prompt: `Generate a complete ${frameworkLabel} beat breakdown for "${title}". Synopsis: ${synopsis}`,
+      title: media?.title,
+      genres: media?.genres,
+      synopsis: media?.synopsis,
+      mediaType: media?.mediaType,
+    });
   };
 
-  /** Per-beat brainstorm; output lands in the same panel, tagged with the beat. */
   const handleBeatBrainstorm = (beat: Beat) => {
     clearError();
     setAiTarget({ kind: 'beat', label: `"${beat.name}" Brainstorm`, beatId: beat.id });
-    generateSummary(
-      `Suggest a creative, high-stakes scene concept for the "${beat.name}" beat (${beat.description}) in film "${media?.title || 'Story'}".`
-    );
+    generateSummary({
+      prompt: `Suggest a creative, high-stakes scene concept for the "${beat.name}" beat (${beat.description}) in film "${media?.title || 'Story'}".`,
+      title: media?.title,
+      genres: media?.genres,
+      synopsis: media?.synopsis,
+      mediaType: media?.mediaType,
+    });
   };
 
-  /** Append the current AI output into the target beat's workspace content. */
   const handleInsertIntoBeat = () => {
     if (!aiSummary || !aiTarget || aiTarget.kind !== 'beat') return;
     const target = beats.find((b) => b.id === aiTarget.beatId);
@@ -216,30 +247,19 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
     setAiTarget(null);
   };
 
-  /** Beats visible under the current act filter. */
   const filteredBeats =
     activeFilterAct === 'all' ? beats : beats.filter((b) => b.act === activeFilterAct);
 
-  /** Count helper for dynamic act-filter labels. */
   const countForAct = (act: string) =>
     act === 'all' ? beats.length : beats.filter((b) => b.act === act).length;
 
-  /** Switch structural framework; guard against silent loss of written beats. */
   const handleFrameworkChange = (next: Framework) => {
     if (next === framework) return;
-    const hasContent = beats.some((b) => b.content.trim().length > 0);
-    if (
-      hasContent &&
-      !window.confirm('Switching frameworks replaces your current beat list. Export first if you want to keep it. Continue?')
-    ) {
-      return;
-    }
     setFramework(next);
     setBeats(createDefaultBeats(next));
     setActiveFilterAct('all');
   };
 
-  /** Shared download helper (JSON or Markdown); revokes the blob URL after click. */
   const downloadFile = (content: string, mime: string, extension: string) => {
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
@@ -251,7 +271,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  /** Export the sheet as pretty JSON. */
   const handleExportJson = () => {
     downloadFile(
       JSON.stringify({ framework, beats, totalRuntimeMinutes }, null, 2),
@@ -260,7 +279,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
     );
   };
 
-  /** Export the sheet as a readable Markdown outline (acts -> beats -> notes). */
   const handleExportMarkdown = () => {
     const titleLine = `# Beat Sheet - ${media?.title || 'Untitled'} (${FRAMEWORKS.find((f) => f.id === framework)?.label ?? framework})`;
     const acts = ['Act 1', 'Act 2', 'Act 3'];
@@ -285,7 +303,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Top Header Card */}
       <div
         className="glass-panel"
         style={{
@@ -302,7 +319,7 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
             <h2 style={{ fontSize: 'var(--text-h1)', fontWeight: 600 }}>
-              {framework === 'three-act' ? 'Classic Three-Act Engine' : 'Save the Cat! 15 Beats Engine'}
+              {FRAMEWORKS.find((f) => f.id === framework)?.label ?? 'Beat Engine'}
             </h2>
             <span
               className="cv-kicker"
@@ -318,7 +335,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
               {beats.length} Canonical Beats
             </span>
 
-            {/* Framework switcher (persisted per title) */}
             <select
               value={framework}
               onChange={(e) => handleFrameworkChange(e.target.value as Framework)}
@@ -343,11 +359,10 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
             </select>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            {media ? `Narrative Structure for: ${media.title}` : 'Universal 3-Act Structure Canvas'}
+            {media ? `Narrative Structure for: ${media.title}` : 'Universal Narrative Structure Canvas'}
           </p>
         </div>
 
-        {/* Runtime / Page Budget & Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div
             style={{
@@ -406,7 +421,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
         </div>
       </div>
 
-      {/* Progress & Act Filter Bar */}
       <div
         style={{
           display: 'flex',
@@ -416,7 +430,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
           gap: '12px',
         }}
       >
-        {/* Progress Bar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, maxWidth: '400px' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Completion:</span>
           <div
@@ -443,7 +456,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
           </span>
         </div>
 
-        {/* Act Filter Buttons - counts derived from real data */}
         <div role="tablist" aria-label="Filter beats by act" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           {[
             { id: 'all', label: 'All Beats' },
@@ -473,7 +485,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
         </div>
       </div>
 
-      {/* AI Output Panel - previously generated text vanished; now visible + insertable */}
       {(isGenerating || aiSummary || aiError) && (
         <div
           className="glass-panel cv-border-glow"
@@ -499,7 +510,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
             </div>
           ) : aiError ? (
             <div role="alert" style={{ fontSize: '12px', color: 'var(--status-danger)', lineHeight: 1.5, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {/* Lucide icon instead of a text glyph (mojibake-proof). */}
               <AlertTriangle size={14} style={{ flexShrink: 0 }} />
               <span>{aiError}</span>
             </div>
@@ -527,7 +537,6 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({
         </div>
       )}
 
-      {/* Beats List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {filteredBeats.map((beat) => (
           <BeatCard
