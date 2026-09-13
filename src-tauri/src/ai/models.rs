@@ -1,3 +1,7 @@
+//! Local AI model metadata and catalog definitions.
+//! Purpose: Defines supported local SLM models, filenames, SHA-256 checksums, and default model configurations.
+//! Communication Matrix: Used by ai::downloader, ai::engine, and commands::ai.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +17,7 @@ pub struct ModelMetadata {
     pub sha256_checksum: String,
     pub context_length: usize,
     pub is_default: bool,
-    pub prompt_format: String, // 'llama3' | 'chatml' | 'custom'
+    pub prompt_format: String,
 }
 
 pub fn get_supported_models() -> Vec<ModelMetadata> {
