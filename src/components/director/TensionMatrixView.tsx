@@ -1,34 +1,20 @@
-﻿/**
- * director/TensionMatrixView.tsx
- * ------------------------------------------------------------
- * WHAT: Character Relationship Tension Matrix - an N------------------------------------------------------------N clickable grid where
- *       each cell opens a modal to set a 1-10 tension score, a relationship
- *       label, and subtext notes between two characters. Cast is managed via
- *       the "Add Character" modal.
- *
- * PERSISTENCE CONTRACT (load-before-save):
- *   Characters/relationships live in per-media localStorage keys
- *   (`cinevault_characters_<mediaId>` / `cinevault_relationships_<mediaId>`,
- *   falling back to `_global` when no title is active). State is hydrated for
- *   the CURRENT key before any write may happen; writes are skipped until
- *   `loadedKeyRef` matches the active key. This - combined with the parent
- *   remount key - prevents writing title A's data into title B's storage.
- *
- * USES:    types/index.ts, common/{Button,Modal}.tsx.
- * USED BY: DirectorSuite.tsx (rendered keyed by media id).
+/**
+ * File Purpose: Character Dynamic Tension Matrix workspace visualizing relational friction scores and managing cast members.
+ * Communication Matrix: Rendered in DirectorSuite.tsx; persists character entities and relationship links to SQLite/localStorage.
  */
-import React, { useState, useEffect, useRef } from 'react';
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Character, RelationshipLink, Media } from '../../types';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 import { UserPlus, Users, Pencil, Trash2 } from 'lucide-react';
+import { api, isTauri } from '../../services/api';
+import { CharacterTensionEngine } from '../../../packages/cinevault-sdk/src/matrix';
 
 interface TensionMatrixViewProps {
-  /** Active media entity; null stores under the `_global` keys. */
   media: Media | null;
 }
 
-/** Shared inline style for the tiny edit/delete icon buttons in cast cells. */
 const CHARACTER_ACTION_BTN_STYLE: React.CSSProperties = {
   background: 'transparent',
   border: '1px solid var(--border-subtle)',
@@ -43,7 +29,6 @@ const CHARACTER_ACTION_BTN_STYLE: React.CSSProperties = {
   padding: 0,
 };
 
-/** Read a JSON array out of localStorage with defensive failure handling. */
 function loadJsonArray<T>(key: string): T[] {
   try {
     const stored = localStorage.getItem(key);
@@ -53,38 +38,89 @@ function loadJsonArray<T>(key: string): T[] {
   }
 }
 
-export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
-  media,
-}) => {
-  /** Storage keys derived from the active title (or global fallback). */
+export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({ media }) => {
   const storageKey = media ? `cinevault_characters_${media.id}` : 'cinevault_characters_global';
   const relStorageKey = media ? `cinevault_relationships_${media.id}` : 'cinevault_relationships_global';
 
-  /** Cast members currently in state (hydrated from `storageKey`). */
   const [characters, setCharacters] = useState<Character[]>(() => loadJsonArray<Character>(storageKey));
-  /** Relationship edges currently in state (hydrated from `relStorageKey`). */
   const [relationships, setRelationships] = useState<RelationshipLink[]>(() => loadJsonArray<RelationshipLink>(relStorageKey));
 
-  /**
-   * Per-domain loaded keys: the characters and relationships stores hydrate
-   * from DIFFERENT keys, so each persist effect must validate against ITS OWN
-   * key (a single shared ref compared both domains against one string, which
-   * silently disabled relationship persistence forever).
-   */
   const loadedCharKeyRef = useRef<string>(storageKey);
   const loadedRelKeyRef = useRef<string>(relStorageKey);
 
-  // Hydrate state whenever the active title (and therefore keys) change.
-  useEffect(() => {
-    setCharacters(loadJsonArray<Character>(storageKey));
-    setRelationships(loadJsonArray<RelationshipLink>(relStorageKey));
-    loadedCharKeyRef.current = storageKey;
-    loadedRelKeyRef.current = relStorageKey;
-    // relStorageKey always changes together with storageKey.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey]);
+  const [editingLink, setEditingLink] = useState<{ c1: Character; c2: Character; link?: RelationshipLink } | null>(null);
+  const [modalTension, setModalTension] = useState<number>(5);
+  const [modalType, setModalType] = useState<string>('Complex');
+  const [modalNotes, setModalNotes] = useState<string>('');
 
-  // Persist characters ONLY once their owning key is the one loaded.
+  const [isAddCharOpen, setIsAddCharOpen] = useState(false);
+  const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
+  const [newCharName, setNewCharName] = useState('');
+  const [newCharRole, setNewCharRole] = useState<'protagonist' | 'antagonist' | 'deuteragonist' | 'supporting' | 'cameo'>('supporting');
+  const [newCharMotivation, setNewCharMotivation] = useState('');
+
+  const tensionSummary = useMemo(() => {
+    const engine = new CharacterTensionEngine();
+    for (const char of characters) {
+      engine.addCharacter({
+        id: char.id,
+        name: char.name,
+        roleType: char.roleType as any,
+        motivation: char.motivation,
+      });
+    }
+    for (const rel of relationships) {
+      engine.setRelationship({
+        sourceCharacterId: rel.sourceCharacterId,
+        targetCharacterId: rel.targetCharacterId,
+        relationshipType: rel.relationshipType,
+        tensionScore: rel.tensionScore,
+        notes: rel.notes,
+      });
+    }
+    return engine.calculateTensionSummary();
+  }, [characters, relationships]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    const loadData = async () => {
+      if (media && isTauri()) {
+        try {
+          const [dbChars, dbRels] = await Promise.all([
+            api.getCharacters(media.id),
+            api.getRelationships(media.id),
+          ]);
+          if (isCurrent) {
+            if (Array.isArray(dbChars) && dbChars.length > 0) {
+              setCharacters(dbChars);
+            } else {
+              setCharacters(loadJsonArray<Character>(storageKey));
+            }
+            if (Array.isArray(dbRels) && dbRels.length > 0) {
+              setRelationships(dbRels);
+            } else {
+              setRelationships(loadJsonArray<RelationshipLink>(relStorageKey));
+            }
+            loadedCharKeyRef.current = storageKey;
+            loadedRelKeyRef.current = relStorageKey;
+            return;
+          }
+        } catch {
+        }
+      }
+      if (isCurrent) {
+        setCharacters(loadJsonArray<Character>(storageKey));
+        setRelationships(loadJsonArray<RelationshipLink>(relStorageKey));
+        loadedCharKeyRef.current = storageKey;
+        loadedRelKeyRef.current = relStorageKey;
+      }
+    };
+    loadData();
+    return () => {
+      isCurrent = false;
+    };
+  }, [storageKey, relStorageKey, media]);
+
   useEffect(() => {
     if (loadedCharKeyRef.current !== storageKey) return;
     try {
@@ -92,9 +128,11 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
     } catch (e) {
       console.warn('Failed to persist characters:', e);
     }
-  }, [characters, storageKey]);
+    if (media && isTauri()) {
+      api.saveCharacters(media.id, characters).catch(() => {});
+    }
+  }, [characters, storageKey, media]);
 
-  // Persist relationships ONLY once THEIR owning key is the one loaded.
   useEffect(() => {
     if (loadedRelKeyRef.current !== relStorageKey) return;
     try {
@@ -102,31 +140,11 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
     } catch (e) {
       console.warn('Failed to persist relationships:', e);
     }
-  }, [relationships, relStorageKey]);
+    if (media && isTauri()) {
+      api.saveRelationships(media.id, relationships).catch(() => {});
+    }
+  }, [relationships, relStorageKey, media]);
 
-  // Edit Relationship Modal State
-  /** Pair being edited plus its existing link, if any. */
-  const [editingLink, setEditingLink] = useState<{ c1: Character; c2: Character; link?: RelationshipLink } | null>(null);
-  /** Draft tension score (1-10) inside the edit modal. */
-  const [modalTension, setModalTension] = useState<number>(5);
-  /** Draft relationship label inside the edit modal. */
-  const [modalType, setModalType] = useState<string>('Complex');
-  /** Draft subtext notes inside the edit modal. */
-  const [modalNotes, setModalNotes] = useState<string>('');
-
-  // Add / Edit Character Modal State
-  /** Whether the character modal is open (create OR edit mode). */
-  const [isAddCharOpen, setIsAddCharOpen] = useState(false);
-  /** Character being edited; null means the modal creates a new one. */
-  const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
-  /** Draft name for the new/edited character. */
-  const [newCharName, setNewCharName] = useState('');
-  /** Draft narrative role for the new/edited character. */
-  const [newCharRole, setNewCharRole] = useState<'protagonist' | 'antagonist' | 'deuteragonist' | 'supporting' | 'cameo'>('supporting');
-  /** Draft core desire/motivation for the new/edited character. */
-  const [newCharMotivation, setNewCharMotivation] = useState('');
-
-  /** Find the undirected link between two character ids, if present. */
   const getRelationship = (id1: string, id2: string): RelationshipLink | undefined => {
     return relationships.find(
       (r) => (r.sourceCharacterId === id1 && r.targetCharacterId === id2) ||
@@ -134,16 +152,13 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
     );
   };
 
-  /** Map a tension score to its heatmap color bucket. Single source of truth
-      for both cell fills and the legend below. */
   const getTensionColor = (score: number): string => {
-    if (score >= 9) return 'rgba(239, 68, 68, 0.85)'; // Red
-    if (score >= 7) return 'rgba(249, 115, 22, 0.85)'; // Orange
-    if (score >= 4) return 'rgba(245, 158, 11, 0.75)'; // Amber
-    return 'rgba(16, 185, 129, 0.75)'; // Green
+    if (score >= 9) return 'rgba(239, 68, 68, 0.85)';
+    if (score >= 7) return 'rgba(249, 115, 22, 0.85)';
+    if (score >= 4) return 'rgba(245, 158, 11, 0.75)';
+    return 'rgba(16, 185, 129, 0.75)';
   };
 
-  /** Open the edit modal pre-filled with the pair's existing link (defaults consistent). */
   const handleCellClick = (c1: Character, c2: Character) => {
     if (c1.id === c2.id) return;
     const existing = getRelationship(c1.id, c2.id);
@@ -153,7 +168,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
     setModalNotes(existing?.notes || '');
   };
 
-  /** Upsert the edited relationship edge (replaces any link between the pair). */
   const handleSaveRelationship = () => {
     if (!editingLink) return;
     const { c1, c2 } = editingLink;
@@ -180,7 +194,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
     setEditingLink(null);
   };
 
-  /** Create a new cast member (UUID) or apply edits to an existing one. */
   const handleAddCharacter = () => {
     if (!newCharName.trim()) return;
 
@@ -218,7 +231,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
     setIsAddCharOpen(false);
   };
 
-  /** Open the character modal pre-filled in EDIT mode. */
   const handleEditCharacter = (char: Character) => {
     setEditingCharacter(char);
     setNewCharName(char.name);
@@ -227,7 +239,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
     setIsAddCharOpen(true);
   };
 
-  /** Delete a character after confirmation, cascading their relationships. */
   const handleDeleteCharacter = (char: Character) => {
     if (!window.confirm(`Remove "${char.name}" from the cast? Their relationship links will also be deleted.`)) {
       return;
@@ -238,7 +249,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
     );
   };
 
-  /** Open the modal in guaranteed CREATE mode with cleared drafts. */
   const openAddCharacterModal = () => {
     setEditingCharacter(null);
     setNewCharName('');
@@ -248,7 +258,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Header Info */}
       <div
         className="glass-panel"
         style={{
@@ -294,7 +303,55 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
         </Button>
       </div>
 
-      {/* Legend Bar - colors derive from getTensionColor (single source of truth) */}
+      {tensionSummary.totalRelationshipLinks > 0 && (
+        <div
+          className="glass-panel"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border-subtle)',
+            flexWrap: 'wrap',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+            <div>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>
+                Average Tension
+              </span>
+              <span style={{ fontSize: '16px', fontWeight: 700, color: getTensionColor(tensionSummary.averageTensionScore), fontFamily: 'var(--font-mono)' }}>
+                {tensionSummary.averageTensionScore.toFixed(1)} / 10
+              </span>
+            </div>
+            <div>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>
+                Active Dynamic Links
+              </span>
+              <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
+                {tensionSummary.totalRelationshipLinks}
+              </span>
+            </div>
+            {tensionSummary.highestTensionPair && (
+              <div>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block' }}>
+                  Peak Friction Pair
+                </span>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {tensionSummary.highestTensionPair.char1} ↔ {tensionSummary.highestTensionPair.char2}
+                  <span style={{ marginLeft: '8px', fontSize: '11px', color: getTensionColor(tensionSummary.highestTensionPair.score), fontFamily: 'var(--font-mono)' }}>
+                    [{tensionSummary.highestTensionPair.score}/10 · {tensionSummary.highestTensionPair.dynamic}]
+                  </span>
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div
         style={{
           display: 'flex',
@@ -324,7 +381,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
         </div>
       </div>
 
-      {/* Tension Matrix Table or Empty State */}
       {characters.length === 0 ? (
         <div
           className="glass-panel"
@@ -409,7 +465,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
                         {rowChar.motivation}
                       </div>
                     )}
-                    {/* Per-character actions: edit / delete (cascades links) */}
                     <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
                       <button
                         type="button"
@@ -475,7 +530,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
                           transition: 'box-shadow var(--transition-fast)',
                           userSelect: 'none',
                         }}
-                        // Glow-only hover: no transform, so rows never jitter.
                         onMouseEnter={(e) => {
                           e.currentTarget.style.boxShadow = 'var(--glow-accent)';
                         }}
@@ -524,7 +578,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
         </div>
       )}
 
-      {/* Edit Relationship Modal */}
       <Modal
         isOpen={Boolean(editingLink)}
         onClose={() => setEditingLink(null)}
@@ -603,7 +656,6 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({
         </div>
       </Modal>
 
-      {/* Add / Edit Character Modal */}
       <Modal
         isOpen={isAddCharOpen}
         onClose={() => {
