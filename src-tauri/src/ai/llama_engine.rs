@@ -1,30 +1,6 @@
-﻿//! ai/llama_engine.rs
-//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//! WHAT: Genuine GGUF token generation using llama.cpp bindings (crate
-//!   `llama-cpp-2`). COMPILED ONLY under `--features real-inference`;
-//!   without that feature this entire module does not exist and
-//!   [`super::engine::LocalAIEngine`] falls back to template analysis.
-//!
-//! DESIGN:
-//!   - The llama.cpp backend is a process-global singleton (`OnceLock`).
-//!   - Loaded models are CACHED by absolute path (first generation pays model
-//!   load cost ~seconds; subsequent calls reuse weights).
-//!   - GPU offload: request.gpuLayers drives LlamaModelParams; 0 = CPU-only,
-//!   negative = offload everything safe for our <2GB VRAM budget.
-//!   - Generation loop: prompt batch decode -> incremental single-token
-//!   batches, invoking the caller's token sink per piece so the UI can
-//!   stream output live via the `ai:token` event.
-//!
-//! API-DRIFT NOTE: llama-cpp-2 tracks upstream llama.cpp closely. This file
-//! targets the 0.1 series (chain_simple sampler + token_to_str + is_eog_token).
-//! If a future bump renames these, the compiler will point at exactly this one
-//! small function (`generate_tokens`) - adjust there only.
-//!
-//! BUILD PREREQUISITES: C/C++ toolchain + cmake (llama.cpp compiles from
-//! source). CUDA/Vulkan require extra sys-crate features; default build is CPU.
-//!
-//! USES:    llama-cpp-2, super::engine::{InferenceRequest, InferenceResponse}.
-//! USED BY: super::engine (dispatch when the feature is enabled).
+//! Llama.cpp genuine GGUF token generation backend.
+//! Purpose: Executes local SLM token inference using llama-cpp-2 bindings with byte-safe multi-byte UTF-8 streaming.
+//! Communication Matrix: Invoked by LocalAIEngine in ai::engine when compiled under the real-inference feature flag.
 
 use crate::ai::engine::{InferenceResponse, TokenSink};
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -37,22 +13,10 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-/// Process-global llama.cpp runtime. Must be initialized exactly once.
 static LLAMA_BACKEND: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
-
-/// Cache of the currently loaded model, keyed by absolute path.
-/// Loading a multi-hundred-MB model takes seconds - reuse across requests.
 static LOADED_MODEL: Mutex<Option<(PathBuf, i64, Arc<LlamaModel>)>> = Mutex::new(None);
-
-/**
- * Serializes the model check+load critical section. Without it, two
- * concurrent first calls could each observe an empty cache and start
- * DUPLICATE 1-2GB loads. Acquire before checking `LOADED_MODEL` for reload,
- * then double-check inside the gate.
- */
 static MODEL_LOAD_LOCK: Mutex<()> = Mutex::new(());
 
-/// Access (or lazily initialize) the global backend.
 fn backend() -> Result<&'static LlamaBackend, String> {
     match LLAMA_BACKEND.get_or_init(|| {
         LlamaBackend::init().map_err(|e| format!("llama.cpp backend init failed: {}", e))
@@ -62,22 +26,10 @@ fn backend() -> Result<&'static LlamaBackend, String> {
     }
 }
 
-/// Borrow the model cache, tolerating a poisoned mutex.
 fn loaded_model() -> MutexGuard<'static, Option<(PathBuf, i64, Arc<LlamaModel>)>> {
     LOADED_MODEL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/**
- * Generate text with the REAL model at `model_path`.
- *
- * Returns the full response (also streamed piece-by-piece through
- * `on_token` when provided). Any load/inference failure propagates as Err -
- * callers must NOT silently fall back to templates after a verified download.
- *
- * * `gpu_layers` - 0 = CPU only; any negative = offload all layers (safe here:
- *   catalog models are <=1.1GB Q4_K_M, inside the hard 2048MB VRAM ceiling);
- *   positive = exact layer count.
- */
 pub fn generate_with_model(
     model_path: &std::path::Path,
     prompt: &str,
@@ -90,7 +42,6 @@ pub fn generate_with_model(
     let start_time = std::time::Instant::now();
     let backend = backend()?;
 
-    // â”€â”€ Model load (cached across requests) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let needs_reload = {
         let guard = loaded_model();
         match guard.as_ref() {
@@ -102,9 +53,6 @@ pub fn generate_with_model(
     };
 
     if needs_reload {
-        // Hold the dedicated load gate around check+load; double-check AFTER
-        // acquiring in case another thread landed the identical model while
-        // we waited.
         let _load_gate = MODEL_LOAD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -125,9 +73,7 @@ pub fn generate_with_model(
                 model_path, gpu_layers
             ));
             let model_params = LlamaModelParams::default()
-                // Negative counts mean "all layers" in llama.cpp; clamp to u32 max.
                 .with_n_gpu_layers(if gpu_layers < 0 { u32::MAX / 2 } else { gpu_layers as u32 });
-            // load_from_file takes a backend reference as proof-of-init (0.1.154 API).
             let model = LlamaModel::load_from_file(backend, model_path, &model_params)
                 .map_err(|e| format!("Failed to load GGUF model: {}", e))?;
             crate::logger::Logger::info("GGUF model loaded successfully.");
@@ -143,9 +89,6 @@ pub fn generate_with_model(
         }
     };
 
-    // â”€â”€ Context creation (cheap; per-request) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // Context size rides inside the params struct (positional n_ctx removed
-    // in the 0.1 series).
     let ctx_size = context_len.min(model.n_ctx_train());
     let ctx_params = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(ctx_size.max(1)));
@@ -153,7 +96,6 @@ pub fn generate_with_model(
         .new_context(backend, ctx_params)
         .map_err(|e| format!("Failed to create inference context: {}", e))?;
 
-    // â”€â”€ Tokenize prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let mut tokens = model
         .str_to_token(prompt, AddBos::Always)
         .map_err(|e| format!("Tokenization failed: {}", e))?;
@@ -161,10 +103,6 @@ pub fn generate_with_model(
         return Err("Prompt produced zero tokens".to_string());
     }
 
-    // Reserve head-room for the generation window: an over-long prompt is
-    // truncated to its LAST `ctx_size - max_new_tokens` tokens (the tail of
-    // the prompt carries the immediate ask) so prompt + generation always
-    // fits the context. llama.cpp hard-fails a decode that exceeds n_ctx.
     let max_prompt_tokens = (ctx_size as usize).saturating_sub(max_new_tokens);
     if max_prompt_tokens < 1 {
         return Err(
@@ -184,10 +122,6 @@ pub fn generate_with_model(
     }
     let prompt_len = tokens.len();
 
-    // Prefill decode in bounded slices of <=512 tokens: llama.cpp requires
-    // bounded batches, and very long prompts previously blew past internal
-    // batch limits. Logits are requested ONLY on the final chunk's final
-    // token so sampling sees exactly the last prompt position.
     const PREFILL_CHUNK_TOKENS: usize = 512;
     let mut prefill_pos = 0usize;
     while prefill_pos < prompt_len {
@@ -206,28 +140,18 @@ pub fn generate_with_model(
         prefill_pos = chunk_end;
     }
 
-    // â”€â”€ Sampling chain: temperature -> distribution pick â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // Seed entropy: the previous constant (42) made every run of the same
-    // prompt produce byte-identical text; derive the seed from wall-clock
-    // sub-second nanos instead. Falls back to the old constant only if the
-    // clock is somehow before the epoch.
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(42);
     let mut sampler = LlamaSampler::chain_simple([
         LlamaSampler::temp(temperature.clamp(0.05, 1.5)),
-        LlamaSampler::dist(seed), // time-derived per-request entropy
+        LlamaSampler::dist(seed),
     ]);
 
-    // â”€â”€ Incremental generation loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let mut generated_text = String::new();
     let mut generated_count: usize = 0;
     let mut n_cur = prompt_len;
-    // Pending UTF-8 bytes: a token piece can SPLIT a multi-byte character
-    // across stream ticks; pushing raw per-token strings previously aborted
-    // generation on split emoji/quotes. Bytes accumulate here and only the
-    // longest VALID UTF-8 prefix is emitted; the undecoded tail is carried.
     let mut pending_utf8: Vec<u8> = Vec::new();
 
     while generated_count < max_new_tokens && n_cur < ctx_size as usize {
@@ -238,18 +162,12 @@ pub fn generate_with_model(
             break;
         }
 
-        let piece = model
-            // Plaintext = do NOT render special tokens into the output stream
-            // (variant set is {Tokenize, Plaintext} on llama-cpp-2 0.1.154;
-            // method itself is deprecated in favor of token_to_piece+Decoder,
-            // accepted here as a warning until that migration).
-            .token_to_str(next_token, Special::Plaintext)
+        let piece_bytes = model
+            .token_to_bytes(next_token, Special::Plaintext)
             .map_err(|e| format!("Token decode failed: {}", e))?;
-        pending_utf8.extend_from_slice(piece.as_bytes());
+        pending_utf8.extend_from_slice(&piece_bytes);
         generated_count += 1;
 
-        // Emit only the valid UTF-8 prefix of the buffer (O(tail), not O(n^2)
-        // over the whole response).
         match std::str::from_utf8(&pending_utf8) {
             Ok(valid) => {
                 if !valid.is_empty() {
@@ -263,7 +181,6 @@ pub fn generate_with_model(
             Err(e) => {
                 let valid_up_to = e.valid_up_to();
                 if valid_up_to > 0 {
-                    // Guaranteed-valid prefix per Utf8Error::valid_up_to().
                     let valid = std::str::from_utf8(&pending_utf8[..valid_up_to])
                         .map_err(|e| format!("UTF-8 revalidation failed: {}", e))?;
                     generated_text.push_str(valid);
@@ -275,7 +192,6 @@ pub fn generate_with_model(
             }
         }
 
-        // Single-token continuation batch.
         let mut step_batch = LlamaBatch::new(1, 1);
         step_batch
             .add(next_token, n_cur as i32, &[0], true)
@@ -285,8 +201,6 @@ pub fn generate_with_model(
         n_cur += 1;
     }
 
-    // Flush the remaining tail: an incomplete sequence at loop end can never
-    // complete, so lossy conversion is correct here.
     if !pending_utf8.is_empty() {
         let tail = String::from_utf8_lossy(&pending_utf8);
         generated_text.push_str(&tail);
