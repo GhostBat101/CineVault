@@ -1,24 +1,8 @@
-﻿/**
- * deck/IngestModal.tsx
- * ----------------------------------------------------------------------------
- * WHAT: "Ingest Media" modal with two tabs: (1) IMDb scraper - paste a URL/ID,
- *       extract metadata, preview, save; (2) Original screenplay - create a
- *       blank narrative canvas (optional local poster image). Persists EXACTLY
- *       ONCE per entry and reports the saved entity upward via onMediaSaved
- *       (App only mirrors state).
- *
- * DATA HONESTY RULE: missing scrape fields stay missing. The UI renders
- *       "unknown" placeholders instead of inventing years/ratings/runtime -
- *       fabricated metadata used to be persisted as fact.
- *
- * USES:    services/api.ts (extractImdb), types/index.ts, common/{Modal,Button}.
- * USED BY: App.tsx.
- *
- * PROPS:
- *   isOpen       - modal visibility.
- *   onClose      - request close (also resets all form state).
- *   onMediaSaved - called with the persisted Media entity (state mirror ONLY).
+/**
+ * File Purpose: Media ingestion modal supporting IMDb metadata extraction and blank original screenplay canvas initialization.
+ * Communication Matrix: Rendered in App.tsx; queries api.extractImdb, api.saveMedia, and api.importPosterAsset.
  */
+
 import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
@@ -28,15 +12,11 @@ import { Media, MediaType } from '../../types';
 import { Sparkles, Globe, PenTool, CheckCircle, ImagePlus, AlertTriangle } from 'lucide-react';
 
 interface IngestModalProps {
-  /** Modal visibility flag. */
   isOpen: boolean;
-  /** Close request; also resets the form. */
   onClose: () => void;
-  /** Receives the already-persisted entity - local state mirroring ONLY. */
   onMediaSaved: (media: Media) => void;
 }
 
-/** Map the scraper's mediaType string onto the MediaType union. */
 function mapScrapedMediaType(raw: string | undefined): MediaType {
   const value = (raw || '').toLowerCase();
   if (value.includes('series') || value.includes('episode') || value.includes('tv')) {
@@ -50,44 +30,25 @@ export const IngestModal: React.FC<IngestModalProps> = ({
   onClose,
   onMediaSaved,
 }) => {
-  /** Which ingest tab is active. */
   const [tab, setTab] = useState<'imdb' | 'original'>('imdb');
-  /** Raw IMDb URL/ID input text. */
   const [imdbUrl, setImdbUrl] = useState('');
-  /** True while the IMDb extraction IPC is in flight (Extract button). */
   const [isExtracting, setIsExtracting] = useState(false);
-  /** True while the vault-save IPC is in flight (Save buttons). */
   const [isSaving, setIsSaving] = useState(false);
-  /** Latest error shown in the banner (extraction or save). */
   const [error, setError] = useState<string | null>(null);
-
-  // Scraped preview state
   const [scrapedData, setScrapedData] = useState<Media | null>(null);
 
-  // Original screenplay form state
   const [originalTitle, setOriginalTitle] = useState('');
   const [originalType, setOriginalType] = useState<MediaType>('movie');
   const [originalSynopsis, setOriginalSynopsis] = useState('');
   const [originalGenres, setOriginalGenres] = useState('Drama, Thriller');
-  /** Backend-cached poster path for the original canvas (from import_poster_asset). */
   const [originalPosterLocalPath, setOriginalPosterLocalPath] = useState<string | undefined>(undefined);
-  /** True while the poster file dialog + backend caching round-trip runs. */
   const [isPickingPoster, setIsPickingPoster] = useState(false);
 
-  /**
-   * Tab switch that also clears any stale error banner - an extraction/save
-   * failure on one tab should not greet the user on the other.
-   */
   const switchTab = (next: 'imdb' | 'original') => {
     setError(null);
     setTab(next);
   };
 
-  /**
-   * Open the native image picker (Tauri only), then cache the picked file
-   * backend-side via import_poster_asset. The returned cached path is stored
-   * and previewed through getPosterSrc so the entry stays fully offline-safe.
-   */
   const handleChoosePoster = async () => {
     if (!isTauri() || isPickingPoster) return;
     setIsPickingPoster(true);
@@ -110,16 +71,11 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     }
   };
 
-  /**
-   * Extract metadata for the entered URL/ID. Builds a Media entity WITHOUT
-   * fabricating any values: absent fields remain undefined.
-   */
   const handleExtractImdb = async () => {
     if (!imdbUrl.trim()) return;
     setIsExtracting(true);
     setError(null);
     try {
-      // NOTE: backend serializes ScrapedMedia as camelCase (serde rename_all).
       const scraped = await api.extractImdb(imdbUrl);
       const mediaEntry: Media = {
         id: `mv_${crypto.randomUUID()}`,
@@ -131,11 +87,8 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         runtimeMinutes: scraped.runtimeMinutes ?? undefined,
         imdbRating: scraped.imdbRating ?? undefined,
         posterUrl: scraped.posterUrl ?? undefined,
-        // Locally cached poster (backend downloads at extract time) - keeps
-        // the vault's artwork available fully offline.
         posterLocalPath: scraped.posterLocalPath ?? undefined,
         synopsis: scraped.synopsis ?? undefined,
-        // Dedupe + trim genres/directors instead of inventing defaults.
         genres: [...new Set(scraped.genres.map((g) => g.trim()).filter(Boolean))],
         directors: [...new Set(scraped.directors.map((d) => d.trim()).filter(Boolean))],
         userStatus: 'plan_to_watch',
@@ -155,7 +108,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     }
   };
 
-  /** Persist the scraped preview ONCE, then hand it to App for state mirroring. */
   const handleSaveToVault = async () => {
     if (!scrapedData) return;
     setIsSaving(true);
@@ -170,7 +122,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     }
   };
 
-  /** Create + persist an original canvas entry (single save). */
   const handleSaveOriginal = async () => {
     if (!originalTitle.trim()) return;
     setIsSaving(true);
@@ -184,7 +135,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         synopsis: originalSynopsis.trim() || undefined,
         genres: [...new Set(originalGenres.split(',').map((g) => g.trim()).filter(Boolean))],
         directors: ['Original Creator'],
-        // Locally cached poster chosen on the Original tab (if any).
         posterLocalPath: originalPosterLocalPath || undefined,
         userStatus: 'plan_to_watch',
         createdAt: now.toISOString(),
@@ -200,7 +150,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     }
   };
 
-  /** Reset every field (including tab) so reopening always starts clean. */
   const handleClose = () => {
     setScrapedData(null);
     setImdbUrl('');
@@ -213,7 +162,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     onClose();
   };
 
-  /** Render an "unknown" chip when a scrape value is absent. */
   const renderUnknown = () => <span style={{ opacity: 0.5 }}>unknown</span>;
 
   return (
@@ -224,7 +172,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
       subtitle="Extract from online databases or begin an original screenwriting project"
       maxWidth="580px"
     >
-      {/* Mode Switcher Tabs */}
       <div
         style={{
           display: 'flex',
@@ -275,7 +222,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         </button>
       </div>
 
-      {/* Error Banner */}
       {error && (
         <div
           role="alert"
@@ -292,13 +238,11 @@ export const IngestModal: React.FC<IngestModalProps> = ({
             gap: '8px',
           }}
         >
-          {/* Lucide icon instead of a text glyph (mojibake-proof). */}
           <AlertTriangle size={14} style={{ flexShrink: 0 }} />
           <span>{error}</span>
         </div>
       )}
 
-      {/* TAB 1: IMDb Scraping Engine */}
       {tab === 'imdb' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <div>
@@ -311,7 +255,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                 value={imdbUrl}
                 onChange={(e) => setImdbUrl(e.target.value)}
                 onKeyDown={(e) => {
-                  // Guard against concurrent extracts (Enter during flight).
                   if (e.key === 'Enter' && imdbUrl.trim() && !isExtracting) handleExtractImdb();
                 }}
                 placeholder="https://www.imdb.com/title/tt1375666/ or tt1375666"
@@ -338,7 +281,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
             </div>
           </div>
 
-          {/* Scraped Result Preview - honest "unknown" chips for absent fields */}
           {scrapedData && (
             <div
               className="glass-panel"
@@ -357,8 +299,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                   src={getPosterSrc(scrapedData)}
                   alt={scrapedData.title}
                   onError={(e) => {
-                    // Local asset leg failed - fall back to the remote CDN
-                    // URL before giving up (chain order from getPosterCandidates).
                     const candidates = getPosterCandidates(scrapedData);
                     const current = e.currentTarget.src;
                     const next = candidates.find((c) => c !== current && !current.endsWith(c));
@@ -403,7 +343,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         </div>
       )}
 
-      {/* TAB 2: Original Screenplay */}
       {tab === 'original' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div>
@@ -473,8 +412,6 @@ export const IngestModal: React.FC<IngestModalProps> = ({
             </div>
           </div>
 
-          {/* Poster row: pick a local image; the backend caches it into the
-              poster scope and we preview the cached copy (offline-safe). */}
           <div>
             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
               Poster (optional)
