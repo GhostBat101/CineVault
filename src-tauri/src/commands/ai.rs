@@ -73,6 +73,7 @@ async fn hydrate_custom_models(
             filename: entry.filename.clone(),
             sha256_checksum: String::new(),
             context_length: entry.context_length as usize,
+            is_default: false,
             prompt_format: entry.prompt_format.clone(),
         });
     }
