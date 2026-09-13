@@ -1,49 +1,23 @@
-﻿/**
- * deck/MediaCard.tsx
- * ------------------------------------------------------------
- * WHAT: Single poster card in the dashboard grid. Shows poster (with offline
- *       fallback tile + bottom scrim), rating pill, watch-status pill (CLICK
- *       TO CYCLE), title/year/runtime meta, and a Director's Suite shortcut.
- *
- * INTERACTION NOTES:
- *   - Hover/focus lift is PURE CSS: root carries .glass-panel.cv-lift and the
- *     poster <img> carries .cv-zoom-img (see index.css). No JS mouse handlers.
- *   - The card root is a focusable button-like article. Its keydown handler
- *     IGNORES events that bubble from nested interactive children (the status
- *     pill / suite button) - this fixes Enter/Space being hijacked from them.
- *   - All callbacks arrive pre-stabilized via useCallback from MediaGrid so
- *     React.memo short-circuits unrelated re-renders. `style` must likewise
- *     be a stable reference (MediaGrid passes a module constant).
- *
- * USES:    types/index.ts, utils/poster.ts, index.css (.glass-panel, .cv-lift,
- *          .poster-scrim, .cv-zoom-img).
- * USED BY: deck/MediaGrid.tsx.
+/**
+ * File Purpose: Responsive film card rendering media posters, rating indicators, watch status toggles, and metadata.
+ * Communication Matrix: Rendered inside MediaGrid.tsx; interacts with Media entity and dispatches status/view callbacks.
  */
-import { memo, useState } from 'react';
+
+import React, { memo, useState, useEffect } from 'react';
 import { Media, WatchStatus } from '../../types';
 import { getPosterCandidates } from '../../utils/poster';
 import { Star, Clock, Sparkles, Heart, Film } from 'lucide-react';
 
 interface MediaCardProps {
-  /** Entity rendered by this card. */
   media: Media;
-  /** Open the detail modal for this media (stable callback). */
   onClick: (media: Media) => void;
-  /** Jump to Director's Suite for this media (stable callback, optional). */
   onOpenDirectorSuite?: (media: Media) => void;
-  /** Persist a new watch status after the user cycles the status pill. */
   onStatusChange?: (media: Media, nextStatus: WatchStatus) => void;
-  /**
-   * Optional inline style merged onto the card root (e.g. height:'100%' from
-   * the stagger wrapper). Pass a STABLE object reference to keep memo effective.
-   */
   style?: React.CSSProperties;
 }
 
-/** Cycle order used by the clickable status pill. */
 const STATUS_CYCLE: WatchStatus[] = ['plan_to_watch', 'watching', 'completed', 'dropped'];
 
-/** Semantic color token for each watch status. */
 function getStatusColor(status: string): string {
   switch (status) {
     case 'completed':
@@ -66,23 +40,15 @@ export const MediaCard = memo<MediaCardProps>(({
   onStatusChange,
   style,
 }) => {
-  /**
-   * Poster fallback chain: local cached file -> remote CDN URL -> icon.
-   * posterStage indexes the candidate list; each img error advances it, so a
-   * failing asset-protocol URL still lets the remote render (and vice versa)
-   * before the icon fallback shows.
-   */
   const posterCandidates = getPosterCandidates(media);
   const [posterStage, setPosterStage] = useState(0);
   const posterSrc = posterCandidates[posterStage];
-
-  /** Next status in the cycle, for tooltip copy. */
   const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(media.userStatus) + 1) % STATUS_CYCLE.length];
 
-  /**
-   * Card-level keydown: activate ONLY when the event originates from the
-   * card itself, never from a nested button (prevents keyboard hijack).
-   */
+  useEffect(() => {
+    setPosterStage(0);
+  }, [media.id, media.posterLocalPath, media.posterUrl]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') {
@@ -91,7 +57,6 @@ export const MediaCard = memo<MediaCardProps>(({
     }
   };
 
-  /** Cycle watch status without triggering the card's open-detail action. */
   const handleStatusClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (onStatusChange) onStatusChange(media, nextStatus);
@@ -117,7 +82,6 @@ export const MediaCard = memo<MediaCardProps>(({
         ...style,
       }}
     >
-      {/* Poster Container - .poster-scrim adds the bottom readability gradient */}
       <div
         className="poster-scrim"
         style={{
@@ -142,8 +106,6 @@ export const MediaCard = memo<MediaCardProps>(({
             }}
           />
         ) : (
-          // Fallback tile: every poster candidate failed (or none existed).
-          // Lucide icon instead of an emoji - renders regardless of font subsets.
           <div
             style={{
               width: '100%',
@@ -158,7 +120,6 @@ export const MediaCard = memo<MediaCardProps>(({
           </div>
         )}
 
-        {/* Rating Pill (zIndex 1 keeps it above the .poster-scrim gradient) */}
         {typeof media.imdbRating === 'number' && (
           <div
             style={{
@@ -185,7 +146,6 @@ export const MediaCard = memo<MediaCardProps>(({
           </div>
         )}
 
-        {/* Favorite heart badge (top-left, above scrim) */}
         {media.isFavorite && (
           <div
             title="Favorited"
@@ -208,7 +168,6 @@ export const MediaCard = memo<MediaCardProps>(({
           </div>
         )}
 
-        {/* Personal rating pill (bottom-right, distinct gold-free accent) */}
         {typeof media.userRating === 'number' && (
           <div
             title={`Your rating: ${media.userRating}/10`}
@@ -236,7 +195,6 @@ export const MediaCard = memo<MediaCardProps>(({
           </div>
         )}
 
-        {/* Status Pill - click to cycle watch status (zIndex above scrim) */}
         {onStatusChange && (
           <button
             onClick={handleStatusClick}
@@ -270,7 +228,6 @@ export const MediaCard = memo<MediaCardProps>(({
         )}
       </div>
 
-      {/* Info Body */}
       <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, justifyContent: 'space-between' }}>
         <div>
           <h3
@@ -309,7 +266,6 @@ export const MediaCard = memo<MediaCardProps>(({
           </div>
         </div>
 
-        {/* Action Button */}
         {onOpenDirectorSuite && (
           <button
             onClick={(e) => {
