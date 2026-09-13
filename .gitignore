@@ -64,6 +64,16 @@ docs/
 _agents/
 mcp_config.json
 
+# Agent & Workspace Rules (Kept local/private - Single Source of Truth in GEMINI.md)
+GEMINI.md
+AGENTS.md
+CLAUDE.md
+.cursorrules
+.cursor/
+.claude/
+.clinerules
+.windsurfrules
+
 # Antigravity Scratch Directories
 .gemini/
 scratch/
