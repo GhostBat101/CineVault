@@ -1,34 +1,26 @@
 /**
- * layout/Sidebar.tsx
- * ─────────────────────────────────────────────────────────────
- * WHAT: Collapsible left navigation rail (240px expanded <-> 68px icon rail):
- *       quick-ingest CTA, four view links with shortcut hints, and the
- *       collapse toggle. Also registers global keyboard shortcuts
- *       (Ctrl+B collapse, Ctrl+1/2/3/, view switching).
- *
- * COLLAPSE OWNERSHIP: `isCollapsed` is owned by App.tsx, which force-collapses
- *       the sidebar at narrow viewports (<640px). This component renders PURELY
- *       from that prop - no CSS-side width overrides - so visual and logical
- *       states can never desync.
- *
- * USES:    lucide-react icons.
- * USED BY: App.tsx.
+ * Sidebar navigation rail component.
+ * Purpose: Provides primary section navigation, collapse state toggling, quick ingest invocation, and keyboard shortcuts with typing context guards.
+ * Communication Matrix: Invoked by App.tsx; triggers onSelectTab, onToggleCollapse, and onOpenIngest callbacks.
  */
+
 import React, { useEffect } from 'react';
 import { Film, Compass, Cpu, Settings, ChevronLeft, ChevronRight, PlusCircle } from 'lucide-react';
 
 interface SidebarProps {
-  /** Currently active top-level view id. */
   activeTab: 'dashboard' | 'director' | 'model-vault' | 'settings';
-  /** Navigate to a top-level view. */
   onSelectTab: (tab: 'dashboard' | 'director' | 'model-vault' | 'settings') => void;
-  /** True renders the 68px icon rail; App may force this at narrow widths. */
   isCollapsed: boolean;
-  /** Toggle expand/collapse (Ctrl+B). */
   onToggleCollapse: () => void;
-  /** Open the ingest modal (New Entry CTA / Ctrl+N handled in App). */
   onOpenIngest: () => void;
 }
+
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Media Library', icon: Film, shortcut: 'Ctrl+1' },
+  { id: 'director', label: "Director's Suite", icon: Compass, shortcut: 'Ctrl+2' },
+  { id: 'model-vault', label: 'Model Vault', icon: Cpu, shortcut: 'Ctrl+3' },
+  { id: 'settings', label: 'Settings', icon: Settings, shortcut: 'Ctrl+,' },
+] as const;
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
@@ -37,39 +29,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   onOpenIngest,
 }) => {
-  // Global Keyboard Shortcuts (Ctrl+B, Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+,)
   useEffect(() => {
+    const isTypingContext = (): boolean => {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = el.tagName.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || (el as HTMLElement).isContentEditable;
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        if (e.key.toLowerCase() === 'b') {
-          e.preventDefault();
-          onToggleCollapse();
-        } else if (e.key === '1') {
-          e.preventDefault();
-          onSelectTab('dashboard');
-        } else if (e.key === '2') {
-          e.preventDefault();
-          onSelectTab('director');
-        } else if (e.key === '3') {
-          e.preventDefault();
-          onSelectTab('model-vault');
-        } else if (e.key === ',') {
-          e.preventDefault();
-          onSelectTab('settings');
-        }
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (isTypingContext()) return;
+
+      const key = e.key.toLowerCase();
+      if (key === 'b') {
+        e.preventDefault();
+        onToggleCollapse();
+      } else if (key === '1') {
+        e.preventDefault();
+        onSelectTab('dashboard');
+      } else if (key === '2') {
+        e.preventDefault();
+        onSelectTab('director');
+      } else if (key === '3') {
+        e.preventDefault();
+        onSelectTab('model-vault');
+      } else if (key === ',') {
+        e.preventDefault();
+        onSelectTab('settings');
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onToggleCollapse, onSelectTab]);
-
-  /** Primary navigation definitions (icon + label + shortcut hint). */
-  const navItems = [
-    { id: 'dashboard', label: 'Media Library', icon: Film, shortcut: 'Ctrl+1' },
-    { id: 'director', label: "Director's Suite", icon: Compass, shortcut: 'Ctrl+2' },
-    { id: 'model-vault', label: 'Model Vault', icon: Cpu, shortcut: 'Ctrl+3' },
-    { id: 'settings', label: 'Settings', icon: Settings, shortcut: 'Ctrl+,' },
-  ] as const;
 
   return (
     <aside
@@ -88,9 +81,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         flexShrink: 0,
       }}
     >
-      {/* Top Action & Navigation Links */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {/* Quick Ingest Button */}
         <button
           type="button"
           onClick={onOpenIngest}
@@ -117,9 +108,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {!isCollapsed && <span>New Entry</span>}
         </button>
 
-        {/* Nav Links */}
         <nav aria-label="Primary" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          {navItems.map((item) => {
+          {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
 
@@ -168,7 +158,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </nav>
       </div>
 
-      {/* Collapse Toggle Footer */}
       <button
         type="button"
         onClick={onToggleCollapse}
