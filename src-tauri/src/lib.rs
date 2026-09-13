@@ -1,40 +1,18 @@
-﻿//! src-tauri/src/lib.rs
-//! â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-//! WHAT: Application entry point. Boots the Tauri v2 host: portable-mode
-//!   directory resolution, logger init, SQLite repository init,
-//!   telemetry monitor and local AI engine construction, then wires
-//!   every command into the invoke handler.
-//!
-//! DESIGN NOTES:
-//!   - PORTABLE MODE: everything (logs, DB, models) lives next to the
-//!   executable rather than %APPDATA%, so the app runs from any folder.
-//!   EXCEPTION: when that directory is not writable (Program Files installs,
-//!   AV-locked dirs), boot falls back to the OS per-user app-data dir via a
-//!   create+delete probe-file check - see [`dir_is_writable`].
-//!   - The [`db::repository::Repository`] is managed as an `std::sync::Arc`
-//!   so blocking SQLite calls can be cloned into
-//!   `tauri::async_runtime::spawn_blocking` workers without holding a
-//!   `State<'_>` borrow across an await point.
-//!   - Schema creation/migration happens exactly once here via
-//!   `Repository::run_migrations` (PRAGMA user_version driven).
-//!
-//! USES:    db::repository, telemetry::hardware, ai::engine, commands, logger.
-//! USED BY: src-tauri/src/main.rs (calls cinevault_lib::run()).
+//! Native desktop host and application bootstrapping entry point.
+//! Purpose: Boots Tauri runtime, initializes portable logging and SQLite repository, and registers all invoke handlers.
+//! Communication Matrix: Main application entry point invoked by src-tauri/src/main.rs; exposes IPC commands to webview.
 
 use tauri::Manager;
 use std::fs;
 use std::path::Path;
 
-pub mod db;
-pub mod scraper;
 pub mod ai;
-pub mod telemetry;
 pub mod commands;
+pub mod db;
 pub mod logger;
+pub mod scraper;
+pub mod telemetry;
 
-/// Probe whether `dir` accepts writes by creating and removing a marker
-/// file. Any failure along the way means the directory is unusable as the
-/// portable base (read-only volume, permission denied, ...).
 fn dir_is_writable(dir: &Path) -> bool {
     if fs::create_dir_all(dir).is_err() {
         return false;
@@ -52,11 +30,6 @@ fn dir_is_writable(dir: &Path) -> bool {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // PORTABLE MODE: default base is the directory holding
-            // CineVault.exe (logs/, cinevault.db and models/ all live beside
-            // it). Installs under write-protected locations must not crash
-            // boot: probe writability FIRST and fall back to the OS per-user
-            // app-data dir when the probe fails.
             let exe_path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
 
@@ -71,7 +44,6 @@ pub fn run() {
                 (fallback, "app-data fallback (portable dir not writable)")
             };
 
-            // 1. Logging Directory (inside whichever base won)
             let logs_dir = base_dir.join("logs");
             let _ = logger::Logger::init(&logs_dir);
             logger::Logger::info(&format!(
@@ -79,9 +51,6 @@ pub fn run() {
                 base_dir, base_dir_source
             ));
 
-            // 2. Database
-            // DB failures abort boot through the returned Err (Tauri supports
-            // Err from setup) with clear user-facing text instead of a panic.
             let db_path = base_dir.join("cinevault.db");
             logger::Logger::info(&format!("Initializing SQLite Database at {:?}", db_path));
             let repo = db::repository::Repository::new(&db_path).map_err(|e| {
@@ -98,14 +67,12 @@ pub fn run() {
                     e
                 )
             })?;
-            // Arc-managed: DB commands clone this handle into spawn_blocking workers.
+
             app.manage(std::sync::Arc::new(repo));
 
-            // 3. Telemetry
             let hardware_monitor = telemetry::hardware::HardwareMonitor::new();
             app.manage(hardware_monitor);
 
-            // 4. AI Models Directory
             let models_dir = base_dir.join("models");
             fs::create_dir_all(&models_dir).unwrap_or_default();
             logger::Logger::info(&format!("Mounting AI Models Vault at {:?}", models_dir));
@@ -135,7 +102,18 @@ pub fn run() {
             commands::app_minimize,
             commands::app_maximize,
             commands::app_close,
-            commands::download_and_install_update
+            commands::download_and_install_update,
+            commands::get_characters,
+            commands::save_characters,
+            commands::get_relationships,
+            commands::save_relationships,
+            commands::get_beat_sheet,
+            commands::save_beat_sheet,
+            commands::get_cinematography_cues,
+            commands::save_cinematography_cues,
+            commands::get_lore_notes,
+            commands::save_lore_notes,
+            commands::migrate_suite_from_local_storage
         ])
         .run(tauri::generate_context!())
         .expect("error while running CineVault desktop application");
