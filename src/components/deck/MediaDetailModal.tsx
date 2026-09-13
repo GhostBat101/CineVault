@@ -1,31 +1,9 @@
 /**
- * deck/MediaDetailModal.tsx
- * ─────────────────────────────────────────────────────────────
- * WHAT: Detail modal for one media entry: HERO BAND (blurred poster backdrop
- *       + scrim + sharp poster/meta row), a visible Overview/AI Breakdown
- *       segmented tab bar, editable watch-status dropdown, synopsis,
- *       Director's Suite shortcut, and the Local AI Narrative Analysis panel
- *       (generation progress, offline-model guidance, retry, persisted
- *       summary).
- *
- * TABS: `activeSubTab` auto-selects on open/generate (see useEffect +
- *       handleGenerateAI) AND is user-switchable via aria-pressed buttons -
- *       the flip logic stays, but the state is now visible and manual.
- *
- * PERSISTENCE FLOW: every mutation here (status change / AI summary / review
- *       notes) saves via `api.saveMedia` FIRST, then reports the updated entity
- *       through `onMediaUpdated` so App.tsx can refresh selectedMedia +
- *       mediaList. This is what makes regenerated summaries and review drafts
- *       survive close/reopen. Review notes flush on blur AND on close via a
- *       draft ref (handleCloseWithReviewFlush), covering Escape/backdrop/X and
- *       the Director's Suite jump.
- *
- * USES:    services/api.ts, hooks/useAISummary.ts, types/index.ts,
- *          common/{Modal,Button,Markdown}.tsx, utils/poster.ts, index.css
- *          (.glass-panel, .cv-border-glow).
- * USED BY: App.tsx.
+ * File Purpose: Detailed media inspector modal providing synopsis, playback status editing, personal scoring, and AI narrative breakdowns.
+ * Communication Matrix: Rendered in App.tsx; invokes useAISummary hook, queries api.saveMedia and api.deleteMedia.
  */
-import { useState, useEffect, useRef } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Markdown } from '../common/Markdown';
@@ -52,21 +30,14 @@ import {
 } from 'lucide-react';
 
 interface MediaDetailModalProps {
-  /** Entity being inspected; null renders nothing. */
   media: Media | null;
-  /** Modal visibility flag. */
   isOpen: boolean;
-  /** Close request. */
   onClose: () => void;
-  /** Jump to Director's Suite for this title. */
   onOpenDirectorSuite: (media: Media) => void;
-  /** Called AFTER persisting any update so the owner can refresh state. */
   onMediaUpdated?: (updated: Media) => void;
-  /** Called AFTER a confirmed backend deletion (id already removed). */
   onMediaDeleted?: (mediaId: string) => void;
 }
 
-/** All watch statuses offered by the dropdown, in display order. */
 const STATUS_OPTIONS: Array<{ value: WatchStatus; label: string }> = [
   { value: 'plan_to_watch', label: 'Plan to Watch' },
   { value: 'watching', label: 'Watching' },
@@ -74,7 +45,6 @@ const STATUS_OPTIONS: Array<{ value: WatchStatus; label: string }> = [
   { value: 'dropped', label: 'Dropped' },
 ];
 
-/** Sub-tabs rendered in the segmented control between hero band and AI panel. */
 const SUB_TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'ai-breakdown', label: 'AI Breakdown' },
@@ -112,18 +82,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     },
   });
 
-  /** Which section is visible inside the AI panel area. */
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'ai-breakdown'>('overview');
-  /** True while a status change is being persisted. */
   const [isSavingStatus, setIsSavingStatus] = useState(false);
-  /**
-   * Latest review-notes draft, mirrored from the textarea on every change so
-   * a close (Escape/backdrop/X or Director's Suite jump) can flush uncommitted
-   * edits that would otherwise be lost between blur and close.
-   */
   const reviewDraftRef = useRef('');
 
-  // Reset/sync local state whenever opened or switched to a different entry.
   useEffect(() => {
     if (media) {
       setSummary(media.aiSummary || '');
@@ -131,105 +93,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
       setActiveSubTab(media.aiSummary ? 'ai-breakdown' : 'overview');
       reviewDraftRef.current = media.reviewNotes ?? '';
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [media?.id]);
 
   if (!media) return null;
 
-  /**
-   * Persist the review-notes draft when it differs from the stored value.
-   * Shared by the textarea blur AND the close wrapper below.
-   */
-  const persistReview = (value: string) => {
-    if (value !== (media.reviewNotes ?? '')) handleUpdateFields({ reviewNotes: value });
-  };
-
-  /** Close wrapper: flush any uncommitted review draft BEFORE closing. */
-  const handleCloseWithReviewFlush = () => {
-    persistReview(reviewDraftRef.current);
-    onClose();
-  };
-
-  /** Kick off (or regenerate) the local AI narrative analysis. */
-  const handleGenerateAI = async () => {
-    setActiveSubTab('ai-breakdown');
-    clearError();
-    await generateSummary({
-      prompt: `Analyze the thematic layers, character arcs, and cinematic subtext for "${media.title}".`,
-      title: media.title,
-      genres: media.genres,
-      synopsis: media.synopsis,
-      mediaType: media.mediaType,
-    });
-  };
-
-  /** Persist a watch-status change and mirror it upward.
-      Marking completed also stamps watchedDate (once). */
-  const handleStatusChange = async (nextStatus: WatchStatus) => {
-    if (isSavingStatus || nextStatus === media.userStatus) return;
-    setIsSavingStatus(true);
-    try {
-      const updated: Media = {
-        ...media,
-        userStatus: nextStatus,
-        // Stamp the completion date the first time a title is marked watched.
-        watchedDate:
-          nextStatus === 'completed' ? (media.watchedDate ?? new Date().toISOString()) : media.watchedDate,
-        updatedAt: new Date().toISOString(),
-      };
-      await api.saveMedia(updated);
-      onMediaUpdated?.(updated);
-    } catch (err) {
-      console.error('[Status Change Error]', err);
-    } finally {
-      setIsSavingStatus(false);
-    }
-  };
-
-  /** Generic personal-metadata saver (rating / favorite / review notes).
-      Applies the change optimistically FIRST so rapid successive edits always
-      build on the newest state; a failed save rolls back to `base`. */
-  const handleUpdateFields = async (patch: Partial<Media>) => {
-    const base = media;
-    const updated: Media = { ...base, ...patch, updatedAt: new Date().toISOString() };
-    onMediaUpdated?.(updated);
-    try {
-      await api.saveMedia(updated);
-    } catch (err) {
-      console.error('[Personal Metadata Save Error]', err);
-      onMediaUpdated?.(base);
-    }
-  };
-
-  /** Permanently delete this entry after explicit confirmation. */
-  const handleDelete = async () => {
-    if (!window.confirm(`Permanently delete "${media.title}" from your vault? This cannot be undone.`)) {
-      return;
-    }
-    try {
-      await api.deleteMedia(media.id);
-
-      // Purge orphaned Director Suite localStorage rows (characters_ /
-      // relationships_ / lore_notes_ / beats_) that belong ONLY to this title;
-      // the backend delete cannot reach them.
-      const suffix = `_${media.id}`;
-      const doomed: string[] = [];
-      for (let i = 0; i < localStorage.length; i += 1) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('cinevault_') && key.endsWith(suffix)) {
-          doomed.push(key);
-        }
-      }
-      doomed.forEach((key) => localStorage.removeItem(key));
-
-      onMediaDeleted?.(media.id);
-    } catch (err) {
-      console.error('[Delete Media Error]', err);
-      toast.error(err instanceof Error ? err.message : String(err), 'Delete failed');
-    }
-  };
-
-  /** Icon + human label for every MediaType union value. */
   const typeInfo = (() => {
     switch (media.mediaType) {
       case 'series':
@@ -245,8 +112,82 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     }
   })();
 
-  /** Poster source: local cached file first, remote URL fallback. */
   const posterSrc = getPosterSrc(media);
+
+  const persistReview = (value: string) => {
+    if (value !== (media.reviewNotes ?? '')) handleUpdateFields({ reviewNotes: value });
+  };
+
+  const handleCloseWithReviewFlush = () => {
+    persistReview(reviewDraftRef.current);
+    onClose();
+  };
+
+  const handleGenerateAI = async () => {
+    setActiveSubTab('ai-breakdown');
+    clearError();
+    await generateSummary({
+      prompt: `Analyze the thematic layers, character arcs, and cinematic subtext for "${media.title}".`,
+      title: media.title,
+      genres: media.genres,
+      synopsis: media.synopsis,
+      mediaType: media.mediaType,
+    });
+  };
+
+  const handleStatusChange = async (nextStatus: WatchStatus) => {
+    if (isSavingStatus || nextStatus === media.userStatus) return;
+    setIsSavingStatus(true);
+    try {
+      const updated: Media = {
+        ...media,
+        userStatus: nextStatus,
+        watchedDate:
+          nextStatus === 'completed' ? (media.watchedDate ?? new Date().toISOString()) : media.watchedDate,
+        updatedAt: new Date().toISOString(),
+      };
+      await api.saveMedia(updated);
+      onMediaUpdated?.(updated);
+    } catch (err) {
+      console.error('[Status Change Error]', err);
+    } finally {
+      setIsSavingStatus(false);
+    }
+  };
+
+  const handleUpdateFields = async (patch: Partial<Media>) => {
+    const base = media;
+    const updated: Media = { ...base, ...patch, updatedAt: new Date().toISOString() };
+    onMediaUpdated?.(updated);
+    try {
+      await api.saveMedia(updated);
+    } catch (err) {
+      console.error('[Personal Metadata Save Error]', err);
+      onMediaUpdated?.(base);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Permanently delete "${media.title}" from your vault? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await api.deleteMedia(media.id);
+      const suffix = `_${media.id}`;
+      const doomed: string[] = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('cinevault_') && key.endsWith(suffix)) {
+          doomed.push(key);
+        }
+      }
+      doomed.forEach((key) => localStorage.removeItem(key));
+      onMediaDeleted?.(media.id);
+    } catch (err) {
+      console.error('[Delete Media Error]', err);
+      toast.error(err instanceof Error ? err.message : String(err), 'Delete failed');
+    }
+  };
 
   return (
     <Modal
@@ -257,7 +198,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
       maxWidth="720px"
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {/* HERO BAND - blurred poster backdrop + scrim, sharp content on top */}
         <div
           style={{
             position: 'relative',
@@ -301,9 +241,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 src={posterSrc}
                 alt={media.title}
                 onError={(e) => {
-                  // Advance down the candidate chain (local asset -> remote)
-                  // before hiding - a failing asset-protocol URL must not
-                  // kill the poster when the CDN URL can still render.
                   const candidates = getPosterCandidates(media);
                   const current = e.currentTarget.src;
                   const next = candidates.find((c) => c !== current && !current.endsWith(c));
@@ -325,256 +262,244 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               />
             )}
 
-          <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
-            <div>
-              {/* Meta Row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                <span
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    padding: '2px 8px',
-                    borderRadius: 'var(--radius-xs)',
-                    backgroundColor: 'var(--bg-tertiary)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-subtle)',
-                  }}
-                >
-                  {typeInfo.icon}
-                  {typeInfo.label}
-                </span>
-
-                {typeof media.imdbRating === 'number' && (
-                  <div
+            <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '10px' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                  <span
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '4px',
-                      color: '#fbbf24',
-                      fontWeight: 700,
-                      fontSize: '14px',
-                    }}
-                  >
-                    <Star size={16} fill="#fbbf24" />
-                    <span>{media.imdbRating.toFixed(1)} IMDb</span>
-                  </div>
-                )}
-                {media.runtimeMinutes && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)', fontSize: '13px' }}>
-                    <Clock size={14} />
-                    <span>{media.runtimeMinutes} min</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Genre Chips */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-                {media.genres.map((g) => (
-                  <span
-                    key={g}
-                    style={{
                       fontSize: '11px',
+                      fontWeight: 600,
                       padding: '2px 8px',
-                      borderRadius: 'var(--radius-full)',
+                      borderRadius: 'var(--radius-xs)',
                       backgroundColor: 'var(--bg-tertiary)',
-                      color: 'var(--text-secondary)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-subtle)',
                     }}
                   >
-                    {g}
+                    {typeInfo.icon}
+                    {typeInfo.label}
                   </span>
-                ))}
+
+                  {typeof media.imdbRating === 'number' && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        color: '#fbbf24',
+                        fontWeight: 700,
+                        fontSize: '14px',
+                      }}
+                    >
+                      <Star size={16} fill="#fbbf24" />
+                      <span>{media.imdbRating.toFixed(1)} IMDb</span>
+                    </div>
+                  )}
+                  {media.runtimeMinutes && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                      <Clock size={14} />
+                      <span>{media.runtimeMinutes} min</span>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                  {media.genres.map((g) => (
+                    <span
+                      key={g}
+                      style={{
+                        fontSize: '11px',
+                        padding: '2px 8px',
+                        borderRadius: 'var(--radius-full)',
+                        backgroundColor: 'var(--bg-tertiary)',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      {g}
+                    </span>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    maxHeight: '90px',
+                    overflowY: 'auto',
+                    padding: '8px 12px',
+                    backgroundColor: 'var(--bg-primary)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-subtle)',
+                    fontSize: '12px',
+                    color: 'var(--text-secondary)',
+                    lineHeight: 1.55,
+                    scrollbarWidth: 'thin',
+                    userSelect: 'text',
+                  }}
+                >
+                  {media.synopsis || 'No synopsis recorded for this entry.'}
+                </div>
               </div>
 
-              {/* Scrollable Synopsis Box */}
-              <div
-                style={{
-                  maxHeight: '90px',
-                  overflowY: 'auto',
-                  padding: '8px 12px',
-                  backgroundColor: 'var(--bg-primary)',
-                  borderRadius: 'var(--radius-sm)',
-                  border: '1px solid var(--border-subtle)',
-                  fontSize: '12px',
-                  color: 'var(--text-secondary)',
-                  lineHeight: 1.55,
-                  scrollbarWidth: 'thin',
-                  userSelect: 'text',
-                }}
-              >
-                {media.synopsis || 'No synopsis recorded for this entry.'}
+              <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <select
+                  value={media.userStatus}
+                  onChange={(e) => handleStatusChange(e.target.value as WatchStatus)}
+                  disabled={isSavingStatus}
+                  aria-label="Watch status"
+                  style={{
+                    padding: '7px 10px',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-medium)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {STATUS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={media.userRating ?? ''}
+                  onChange={(e) =>
+                    handleUpdateFields({ userRating: e.target.value ? Number(e.target.value) : undefined })
+                  }
+                  aria-label="Your rating out of ten"
+                  title="Your personal rating (1-10)"
+                  style={{
+                    padding: '7px 6px',
+                    backgroundColor: media.userRating ? 'var(--accent-subtle)' : 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-medium)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: media.userRating ? 'var(--accent)' : 'var(--text-primary)',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                >
+                  <option value="">Rate</option>
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      ★ {n}/10
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => handleUpdateFields({ isFavorite: !media.isFavorite })}
+                  aria-pressed={Boolean(media.isFavorite)}
+                  aria-label={media.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                  title={media.isFavorite ? 'Favorited' : 'Add to favorites'}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '32px',
+                    height: '30px',
+                    backgroundColor: media.isFavorite ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg-tertiary)',
+                    border: `1px solid ${media.isFavorite ? 'var(--status-danger)' : 'var(--border-medium)'}`,
+                    borderRadius: 'var(--radius-sm)',
+                    color: media.isFavorite ? 'var(--status-danger)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Heart size={14} fill={media.isFavorite ? 'currentColor' : 'none'} />
+                </button>
+
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Compass size={14} />}
+                  onClick={() => {
+                    onOpenDirectorSuite(media);
+                    handleCloseWithReviewFlush();
+                  }}
+                >
+                  Director's Suite
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Sparkles size={14} />}
+                  onClick={handleGenerateAI}
+                  isLoading={isGenerating}
+                >
+                  {summary ? 'Regenerate Analysis' : 'Local AI Narrative Analysis'}
+                </Button>
+
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  aria-label={`Delete ${media.title} permanently`}
+                  title="Delete from vault"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    marginLeft: 'auto',
+                    padding: '7px 10px',
+                    backgroundColor: 'transparent',
+                    border: '1px solid var(--border-medium)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-muted)',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = 'var(--status-danger)';
+                    e.currentTarget.style.borderColor = 'var(--status-danger)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = 'var(--text-muted)';
+                    e.currentTarget.style.borderColor = 'var(--border-medium)';
+                  }}
+                >
+                  <Trash2 size={13} />
+                  Delete
+                </button>
+              </div>
+
+              <div>
+                <label className="cv-kicker" style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                  Your Review & Notes
+                </label>
+                <textarea
+                  rows={2}
+                  defaultValue={media.reviewNotes ?? ''}
+                  key={`review_${media.id}`}
+                  onChange={(e) => {
+                    reviewDraftRef.current = e.target.value;
+                  }}
+                  onBlur={(e) => persistReview(e.target.value)}
+                  placeholder="Private thoughts, hot takes, rewatch notes..."
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    backgroundColor: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px',
+                    fontFamily: 'var(--font-sans)',
+                    resize: 'vertical',
+                  }}
+                />
               </div>
             </div>
-
-            {/* Action Bar - status editor, personal rating, favorite, actions */}
-            <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <select
-                value={media.userStatus}
-                onChange={(e) => handleStatusChange(e.target.value as WatchStatus)}
-                disabled={isSavingStatus}
-                aria-label="Watch status"
-                style={{
-                  padding: '7px 10px',
-                  backgroundColor: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-medium)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-primary)',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-
-              {/* Personal rating (1-10) */}
-              <select
-                value={media.userRating ?? ''}
-                onChange={(e) =>
-                  handleUpdateFields({ userRating: e.target.value ? Number(e.target.value) : undefined })
-                }
-                aria-label="Your rating out of ten"
-                title="Your personal rating (1-10)"
-                style={{
-                  padding: '7px 6px',
-                  backgroundColor: media.userRating ? 'var(--accent-subtle)' : 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-medium)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: media.userRating ? 'var(--accent)' : 'var(--text-primary)',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  fontFamily: 'var(--font-mono)',
-                }}
-              >
-                <option value="">Rate</option>
-                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                  <option key={n} value={n}>
-                    ★ {n}/10
-                  </option>
-                ))}
-              </select>
-
-              {/* Favorite toggle */}
-              <button
-                type="button"
-                onClick={() => handleUpdateFields({ isFavorite: !media.isFavorite })}
-                aria-pressed={Boolean(media.isFavorite)}
-                aria-label={media.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                title={media.isFavorite ? 'Favorited' : 'Add to favorites'}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: '32px',
-                  height: '30px',
-                  backgroundColor: media.isFavorite ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg-tertiary)',
-                  border: `1px solid ${media.isFavorite ? 'var(--status-danger)' : 'var(--border-medium)'}`,
-                  borderRadius: 'var(--radius-sm)',
-                  color: media.isFavorite ? 'var(--status-danger)' : 'var(--text-muted)',
-                  cursor: 'pointer',
-                }}
-              >
-                <Heart size={14} fill={media.isFavorite ? 'currentColor' : 'none'} />
-              </button>
-
-              <Button
-                variant="primary"
-                size="sm"
-                icon={<Compass size={14} />}
-                onClick={() => {
-                  onOpenDirectorSuite(media);
-                  // Same flush path as a normal close so the review draft is
-                  // persisted before the modal unmounts.
-                  handleCloseWithReviewFlush();
-                }}
-              >
-                Director's Suite
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<Sparkles size={14} />}
-                onClick={handleGenerateAI}
-                isLoading={isGenerating}
-              >
-                {summary ? 'Regenerate Analysis' : 'Local AI Narrative Analysis'}
-              </Button>
-
-              {/* Destructive zone - pushed to the end of the action bar */}
-              <button
-                type="button"
-                onClick={handleDelete}
-                aria-label={`Delete ${media.title} permanently`}
-                title="Delete from vault"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  marginLeft: 'auto',
-                  padding: '7px 10px',
-                  backgroundColor: 'transparent',
-                  border: '1px solid var(--border-medium)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-muted)',
-                  fontSize: '12px',
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = 'var(--status-danger)';
-                  e.currentTarget.style.borderColor = 'var(--status-danger)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = 'var(--text-muted)';
-                  e.currentTarget.style.borderColor = 'var(--border-medium)';
-                }}
-              >
-                <Trash2 size={13} />
-                Delete
-              </button>
-            </div>
-
-            {/* Personal Review Notes - saved on blur AND on close (draft is
-                mirrored into reviewDraftRef so nothing uncommitted is lost). */}
-            <div>
-              <label className="cv-kicker" style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                Your Review & Notes
-              </label>
-              <textarea
-                rows={2}
-                defaultValue={media.reviewNotes ?? ''}
-                key={`review_${media.id}`}
-                onChange={(e) => {
-                  reviewDraftRef.current = e.target.value;
-                }}
-                onBlur={(e) => persistReview(e.target.value)}
-                placeholder="Private thoughts, hot takes, rewatch notes..."
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  backgroundColor: 'var(--bg-tertiary)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-primary)',
-                  fontSize: '12px',
-                  fontFamily: 'var(--font-sans)',
-                  resize: 'vertical',
-                }}
-              />
-            </div>
-          </div>
           </div>
         </div>
 
-        {/* Sub-tab segmented control - makes activeSubTab visible & manual */}
         <div role="group" aria-label="Detail sections" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           {SUB_TABS.map((tab) => (
             <button
@@ -598,7 +523,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
           ))}
         </div>
 
-        {/* AI Synthesis Section */}
         {activeSubTab === 'ai-breakdown' && (
           <div
             className="glass-panel cv-border-glow"
@@ -618,7 +542,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               )}
             </div>
 
-            {/* Download Progress Telemetry (First-Use Auto-Download) */}
             {downloadProgress !== null && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px', padding: '12px', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-primary)', flexWrap: 'wrap', gap: '6px' }}>
@@ -651,7 +574,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               </div>
             )}
 
-            {/* Offline Notification Alert */}
             {error && error.includes('OFFLINE_NO_INTERNET') ? (
               <div
                 role="alert"
