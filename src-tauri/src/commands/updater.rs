@@ -79,10 +79,12 @@ pub async fn download_and_install_update(
 
     let temp_dir = std::env::temp_dir();
     let target_path = temp_dir.join(&safe_filename);
+    let part_path = temp_dir.join(format!("{}.part", safe_filename));
 
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
         .connect_timeout(std::time::Duration::from_secs(15))
+        .read_timeout(std::time::Duration::from_secs(30))
         .tcp_keepalive(std::time::Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
@@ -102,7 +104,7 @@ pub async fn download_and_install_update(
     }
 
     let total_bytes = response.content_length().unwrap_or(0);
-    let mut file = tokio::fs::File::create(&target_path).await
+    let mut file = tokio::fs::File::create(&part_path).await
         .map_err(|e| format!("Failed to create destination file: {}", e))?;
 
     let mut downloaded_bytes = 0u64;
@@ -115,7 +117,11 @@ pub async fn download_and_install_update(
         match chunk_result {
             Ok(chunk) => {
                 hasher.update(&chunk);
-                file.write_all(&chunk).await.map_err(|e| format!("Disk write error: {}", e))?;
+                if let Err(e) = file.write_all(&chunk).await {
+                    drop(file);
+                    let _ = tokio::fs::remove_file(&part_path).await;
+                    return Err(format!("Disk write error: {}", e));
+                }
                 downloaded_bytes += chunk.len() as u64;
                 let elapsed = start_time.elapsed().as_secs_f32().max(0.1);
                 let speed_mbps = ((downloaded_bytes as f32) / (1024.0 * 1024.0)) / elapsed;
@@ -136,22 +142,31 @@ pub async fn download_and_install_update(
                     last_emit_time = std::time::Instant::now();
                 }
             }
-            Err(e) => return Err(format!("Download interrupted: {}", e)),
+            Err(e) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(&part_path).await;
+                return Err(format!("Download interrupted: {}", e));
+            }
         }
     }
 
-    file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
+    if let Err(e) = file.flush().await {
+        drop(file);
+        let _ = tokio::fs::remove_file(&part_path).await;
+        return Err(format!("Flush error: {}", e));
+    }
+    drop(file);
 
     let expected = match expected_sha256.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
         Some(digest) => digest.trim_start_matches("sha256:").to_ascii_lowercase(),
         None => {
-            let _ = tokio::fs::remove_file(&target_path).await;
+            let _ = tokio::fs::remove_file(&part_path).await;
             return Err("UPDATE_CHECKSUM_MISSING: Expected SHA-256 verification checksum was not provided".to_string());
         }
     };
 
     if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
-        let _ = tokio::fs::remove_file(&target_path).await;
+        let _ = tokio::fs::remove_file(&part_path).await;
         return Err(format!(
             "UPDATE_CHECKSUM_INVALID: Provided checksum '{}' is not a valid 64-character SHA-256 hex string",
             expected
@@ -160,13 +175,20 @@ pub async fn download_and_install_update(
 
     let actual = format!("{:x}", hasher.finalize());
     if !actual.eq_ignore_ascii_case(&expected) {
-        let _ = tokio::fs::remove_file(&target_path).await;
+        let _ = tokio::fs::remove_file(&part_path).await;
         return Err(format!(
             "UPDATE_CHECKSUM_MISMATCH: expected {} got {}",
             expected, actual
         ));
     }
     crate::logger::Logger::info("Update installer SHA-256 verification passed.");
+
+    if target_path.exists() {
+        let _ = tokio::fs::remove_file(&target_path).await;
+    }
+    tokio::fs::rename(&part_path, &target_path)
+        .await
+        .map_err(|e| format!("Failed to finalize installer file: {}", e))?;
 
     let _ = app_handle.emit("app_update_progress", serde_json::json!({
         "downloadedBytes": downloaded_bytes,
