@@ -11,6 +11,7 @@ import { Markdown } from '../common/Markdown';
 import { Sparkles, Download, Clock, FileText, Loader2, AlertTriangle } from 'lucide-react';
 import { useAISummary } from '../../hooks/useAISummary';
 import { api, isTauri } from '../../services/api';
+import { toast } from '../common/Toast';
 
 interface BeatSheetViewProps {
   media: Media | null;
@@ -26,6 +27,8 @@ interface PersistedBeatSheet {
 }
 
 type AITarget = { kind: 'sheet'; label: string } | { kind: 'beat'; label: string; beatId: string } | null;
+
+const SAVE_DEBOUNCE_MS = 300;
 
 const FRAMEWORKS: Array<{ id: Framework; label: string }> = [
   { id: 'save-the-cat', label: 'Save the Cat! (15 Beats)' },
@@ -118,7 +121,10 @@ function loadPersistedSheet(key: string): PersistedBeatSheet | null {
 }
 
 export const BeatSheetView: React.FC<BeatSheetViewProps> = ({ media }) => {
-  const storageKey = media ? `cinevault_beats_${media.id}` : 'cinevault_beats_global';
+  const mediaId = media?.id ?? null;
+  const mediaTitle = media?.title || 'Feature';
+  const mediaRuntime = media?.runtimeMinutes || 110;
+  const storageKey = mediaId ? `cinevault_beats_${mediaId}` : 'cinevault_beats_global';
 
   const initialSheet = loadPersistedSheet(storageKey);
   const initialFramework = initialSheet?.framework ?? 'save-the-cat';
@@ -127,9 +133,10 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({ media }) => {
     initialSheet ? initialSheet.beats : createDefaultBeats(initialFramework)
   );
   const [totalRuntimeMinutes, setTotalRuntimeMinutes] = useState<number>(
-    initialSheet?.totalRuntimeMinutes ?? (media?.runtimeMinutes || 110)
+    initialSheet?.totalRuntimeMinutes ?? mediaRuntime
   );
-  const loadedKeyRef = useRef<string>(storageKey);
+  const loadedKeyRef = useRef<string | null>(null);
+  const sheetCreatedAtRef = useRef<string>(new Date().toISOString());
 
   const [runtimeDraft, setRuntimeDraft] = useState<string>(String(totalRuntimeMinutes));
   const [activeFilterAct, setActiveFilterAct] = useState<string>('all');
@@ -138,17 +145,18 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({ media }) => {
 
   useEffect(() => {
     let isCurrent = true;
+    loadedKeyRef.current = null;
     const loadData = async () => {
-      if (media && isTauri()) {
+      if (mediaId && isTauri()) {
         try {
-          const dbSheet = await api.getBeatSheet(media.id);
+          const dbSheet = await api.getBeatSheet(mediaId);
           if (isCurrent && dbSheet && Array.isArray(dbSheet.beats) && dbSheet.beats.length > 0) {
             const sheetFramework = (dbSheet.framework as Framework) || 'save-the-cat';
+            sheetCreatedAtRef.current = dbSheet.createdAt || new Date().toISOString();
             setFramework(sheetFramework);
-            setBeats(dbSheet.beats as any);
-            const runtime = media.runtimeMinutes || 110;
-            setTotalRuntimeMinutes(runtime);
-            setRuntimeDraft(String(runtime));
+            setBeats(dbSheet.beats as unknown as Beat[]);
+            setTotalRuntimeMinutes(mediaRuntime);
+            setRuntimeDraft(String(mediaRuntime));
             loadedKeyRef.current = storageKey;
             return;
           }
@@ -158,9 +166,10 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({ media }) => {
       if (isCurrent) {
         const sheet = loadPersistedSheet(storageKey);
         const sheetFramework = sheet?.framework ?? 'save-the-cat';
+        sheetCreatedAtRef.current = new Date().toISOString();
         setFramework(sheetFramework);
         setBeats(sheet ? sheet.beats : createDefaultBeats(sheetFramework));
-        const runtime = sheet?.totalRuntimeMinutes ?? (media?.runtimeMinutes || 110);
+        const runtime = sheet?.totalRuntimeMinutes ?? mediaRuntime;
         setTotalRuntimeMinutes(runtime);
         setRuntimeDraft(String(runtime));
         loadedKeyRef.current = storageKey;
@@ -170,7 +179,7 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({ media }) => {
     return () => {
       isCurrent = false;
     };
-  }, [storageKey, media]);
+  }, [storageKey, mediaId, mediaRuntime]);
 
   useEffect(() => {
     if (loadedKeyRef.current !== storageKey) return;
@@ -181,18 +190,24 @@ export const BeatSheetView: React.FC<BeatSheetViewProps> = ({ media }) => {
       console.warn('Failed to persist beat sheet:', e);
     }
 
-    if (media && isTauri()) {
-      api.saveBeatSheet({
-        id: `sheet_${media.id}`,
-        mediaId: media.id,
-        framework: framework as any,
-        title: `${media.title || 'Feature'} Beat Sheet`,
-        beats: beats as any,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }).catch(() => {});
-    }
-  }, [beats, totalRuntimeMinutes, framework, storageKey, media]);
+    if (!mediaId || !isTauri()) return;
+    const timer = window.setTimeout(() => {
+      api
+        .saveBeatSheet({
+          id: `sheet_${mediaId}`,
+          mediaId,
+          framework: framework as any,
+          title: `${mediaTitle} Beat Sheet`,
+          beats: beats as any,
+          createdAt: sheetCreatedAtRef.current,
+          updatedAt: new Date().toISOString(),
+        })
+        .catch((err) => {
+          toast.error(err instanceof Error ? err.message : String(err), 'Failed to save beat sheet');
+        });
+    }, SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [beats, totalRuntimeMinutes, framework, storageKey, mediaId, mediaTitle]);
 
   const completedCount = beats.filter((b) => b.isCompleted).length;
   const progressPercent = beats.length > 0 ? Math.round((completedCount / beats.length) * 100) : 0;
