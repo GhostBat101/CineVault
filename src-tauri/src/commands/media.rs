@@ -2,6 +2,7 @@
 //! Purpose: Handles IMDb ingestion, poster caching/importing, media CRUD, full vault export/import, and application settings.
 //! Communication Matrix: Invoked by frontend api.ts; interfaces with scraper::imdb, db::repository, and tauri runtime.
 
+use futures_util::StreamExt;
 use tauri::{AppHandle, Manager, State};
 use tokio::io::AsyncWriteExt;
 use crate::db::repository::{FullDatabaseExport, MediaRecord, Repository};
@@ -134,21 +135,60 @@ async fn cache_poster_locally(
             response.status()
         ));
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read poster bytes: {}", e))?;
+
+    if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+        let ct = content_type.to_str().unwrap_or_default().trim().to_ascii_lowercase();
+        if !ct.starts_with("image/") {
+            return Err(format!("Invalid poster content-type: {}", ct));
+        }
+    }
+
+    if let Some(len) = response.content_length() {
+        if len > POSTER_IMPORT_MAX_BYTES {
+            return Err(format!(
+                "Remote poster exceeds {} MB limit",
+                POSTER_IMPORT_MAX_BYTES / (1024 * 1024)
+            ));
+        }
+    }
 
     let target_path = posters_dir.join(format!("{}.jpg", imdb_id));
     let mut file = tokio::fs::File::create(&target_path)
         .await
         .map_err(|e| format!("Failed to create poster file: {}", e))?;
-    file.write_all(&bytes)
-        .await
-        .map_err(|e| format!("Failed to write poster file: {}", e))?;
-    file.flush()
-        .await
-        .map_err(|e| format!("Failed to flush poster file: {}", e))?;
+
+    let mut stream = response.bytes_stream();
+    let mut written: u64 = 0;
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = match chunk_result {
+            Ok(c) => c,
+            Err(e) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(&target_path).await;
+                return Err(format!("Failed to read poster stream: {}", e));
+            }
+        };
+        written = written.saturating_add(chunk.len() as u64);
+        if written > POSTER_IMPORT_MAX_BYTES {
+            drop(file);
+            let _ = tokio::fs::remove_file(&target_path).await;
+            return Err(format!(
+                "Remote poster exceeds {} MB limit",
+                POSTER_IMPORT_MAX_BYTES / (1024 * 1024)
+            ));
+        }
+        if let Err(e) = file.write_all(&chunk).await {
+            drop(file);
+            let _ = tokio::fs::remove_file(&target_path).await;
+            return Err(format!("Failed to write poster file: {}", e));
+        }
+    }
+
+    if let Err(e) = file.flush().await {
+        drop(file);
+        let _ = tokio::fs::remove_file(&target_path).await;
+        return Err(format!("Failed to flush poster file: {}", e));
+    }
 
     Ok(target_path.to_string_lossy().to_string())
 }
