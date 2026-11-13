@@ -1,6 +1,6 @@
 /**
  * File Purpose: Settings workspace configuring luxury dark themes, local AI parameters, vault backup bundles, and application updates.
- * Communication Matrix: Rendered in App.tsx; invokes api.getAppSettings, api.saveAppSettings, api.checkForUpdates, and exportVaultBundle.
+ * Communication Matrix: Rendered in App.tsx; invokes api.getAppSettings, api.saveAppSettings, api.checkForUpdates, exportVaultBundle, and importVaultBundle.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -197,17 +197,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTimeout(() => setStatusMessage(null), 3000);
   };
 
-  /**
-   * Export a full vault bundle (SQLite database + Director Suite localStorage
-   * data) as one downloadable JSON envelope.
-   */
   const handleExportDatabase = async () => {
     try {
       await exportVaultBundle();
       showStatus('Vault bundle exported (database + Director Suite data).');
     } catch (err) {
-      // Non-blocking toast instead of alert(): export failures surface
-      // without freezing the UI thread.
       const errMessage = err instanceof Error ? err.message : String(err);
       toast.error(errMessage, 'Export failed');
     }
@@ -222,9 +216,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const file = target.files?.[0];
       if (!file) return;
       try {
-        // File read INSIDE the guard - permission/IO failures must surface
-        // as a toast, not an unhandled rejection. Bundle files restore their
-        // Director Suite localStorage keys before the database import.
         const text = await file.text();
         const { suiteKeys } = await importVaultBundle(text);
         showStatus(
@@ -337,7 +328,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         })}
       </div>
 
-      {/* Right Content Area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {statusMessage && (
           <div
@@ -358,7 +348,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* TAB 1: General & Theme */}
         {activeTab === 'general' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
@@ -403,7 +392,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* TAB 2: AI & VRAM */}
         {activeTab === 'ai' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
@@ -444,7 +432,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onChange={(e) => {
                     const mode = e.target.value;
                     setOffloadMode(mode);
-                    // inferenceMode is the persisted field name for this control
                     persistAiSettings({ inferenceMode: mode === 'cpu_only' ? 'cpu_only' : 'gpu_auto' });
                   }}
                   aria-label="GPU layer offload strategy"
@@ -466,7 +453,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* TAB 6: Data & Portability */}
         {activeTab === 'data' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
@@ -516,7 +502,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* TAB 7: Developer & SDK */}
         {activeTab === 'developer' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
@@ -583,7 +568,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* 8. Updates & Releases Tab (On-Demand GitHub Release Checker) */}
         {activeTab === 'updates' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
@@ -593,7 +577,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </p>
             </div>
 
-            {/* Current Installed Version Card */}
             <div
               className="glass-panel"
               style={{
@@ -626,7 +609,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </Button>
             </div>
 
-            {/* Error Banner */}
             {updateError && (
               <div
                 style={{
@@ -642,7 +624,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             )}
 
-            {/* Update Info Display */}
             {updateInfo && !isCheckingUpdate && (
               <div
                 className="glass-panel"
@@ -721,7 +702,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 </div>
 
-                {/* Live Download & Install Progress Bar */}
                 {isInstallingUpdate && (
                   <div
                     style={{
@@ -761,7 +741,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 )}
 
-                {/* Release Download & Action Links */}
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
                   {updateInfo.hasUpdate ? (
                     <Button
@@ -800,7 +779,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* TAB: IMDb Ingestion - OMDb enrichment key (real implementation) */}
         {activeTab === 'scraper' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
@@ -845,7 +823,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* Tabs whose backing features are not implemented yet - honest copy */}
         {(activeTab === 'director' || activeTab === 'storage') && (
           <div className="glass-panel" style={{ padding: '24px', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
             <h4 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px' }}>{tabs.find((t) => t.id === activeTab)?.label}</h4>
