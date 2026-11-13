@@ -10,10 +10,13 @@ import { Modal } from '../common/Modal';
 import { UserPlus, Users, Pencil, Trash2 } from 'lucide-react';
 import { api, isTauri } from '../../services/api';
 import { CharacterTensionEngine } from '../../../packages/cinevault-sdk/src/matrix';
+import { toast } from '../common/Toast';
 
 interface TensionMatrixViewProps {
   media: Media | null;
 }
+
+const SAVE_DEBOUNCE_MS = 300;
 
 const CHARACTER_ACTION_BTN_STYLE: React.CSSProperties = {
   background: 'transparent',
@@ -39,14 +42,15 @@ function loadJsonArray<T>(key: string): T[] {
 }
 
 export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({ media }) => {
-  const storageKey = media ? `cinevault_characters_${media.id}` : 'cinevault_characters_global';
-  const relStorageKey = media ? `cinevault_relationships_${media.id}` : 'cinevault_relationships_global';
+  const mediaId = media?.id ?? null;
+  const storageKey = mediaId ? `cinevault_characters_${mediaId}` : 'cinevault_characters_global';
+  const relStorageKey = mediaId ? `cinevault_relationships_${mediaId}` : 'cinevault_relationships_global';
 
   const [characters, setCharacters] = useState<Character[]>(() => loadJsonArray<Character>(storageKey));
   const [relationships, setRelationships] = useState<RelationshipLink[]>(() => loadJsonArray<RelationshipLink>(relStorageKey));
 
-  const loadedCharKeyRef = useRef<string>(storageKey);
-  const loadedRelKeyRef = useRef<string>(relStorageKey);
+  const loadedCharKeyRef = useRef<string | null>(null);
+  const loadedRelKeyRef = useRef<string | null>(null);
 
   const [editingLink, setEditingLink] = useState<{ c1: Character; c2: Character; link?: RelationshipLink } | null>(null);
   const [modalTension, setModalTension] = useState<number>(5);
@@ -83,12 +87,14 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({ media }) =
 
   useEffect(() => {
     let isCurrent = true;
+    loadedCharKeyRef.current = null;
+    loadedRelKeyRef.current = null;
     const loadData = async () => {
-      if (media && isTauri()) {
+      if (mediaId && isTauri()) {
         try {
           const [dbChars, dbRels] = await Promise.all([
-            api.getCharacters(media.id),
-            api.getRelationships(media.id),
+            api.getCharacters(mediaId),
+            api.getRelationships(mediaId),
           ]);
           if (isCurrent) {
             if (Array.isArray(dbChars) && dbChars.length > 0) {
@@ -119,7 +125,7 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({ media }) =
     return () => {
       isCurrent = false;
     };
-  }, [storageKey, relStorageKey, media]);
+  }, [storageKey, relStorageKey, mediaId]);
 
   useEffect(() => {
     if (loadedCharKeyRef.current !== storageKey) return;
@@ -128,10 +134,14 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({ media }) =
     } catch (e) {
       console.warn('Failed to persist characters:', e);
     }
-    if (media && isTauri()) {
-      api.saveCharacters(media.id, characters).catch(() => {});
-    }
-  }, [characters, storageKey, media]);
+    if (!mediaId || !isTauri()) return;
+    const timer = window.setTimeout(() => {
+      api.saveCharacters(mediaId, characters).catch((err) => {
+        toast.error(err instanceof Error ? err.message : String(err), 'Failed to save characters');
+      });
+    }, SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [characters, storageKey, mediaId]);
 
   useEffect(() => {
     if (loadedRelKeyRef.current !== relStorageKey) return;
@@ -140,10 +150,14 @@ export const TensionMatrixView: React.FC<TensionMatrixViewProps> = ({ media }) =
     } catch (e) {
       console.warn('Failed to persist relationships:', e);
     }
-    if (media && isTauri()) {
-      api.saveRelationships(media.id, relationships).catch(() => {});
-    }
-  }, [relationships, relStorageKey, media]);
+    if (!mediaId || !isTauri()) return;
+    const timer = window.setTimeout(() => {
+      api.saveRelationships(mediaId, relationships).catch((err) => {
+        toast.error(err instanceof Error ? err.message : String(err), 'Failed to save relationships');
+      });
+    }, SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [relationships, relStorageKey, mediaId]);
 
   const getRelationship = (id1: string, id2: string): RelationshipLink | undefined => {
     return relationships.find(
