@@ -1,6 +1,6 @@
 {
-  "version": "0.3.24",
-  "build": 45,
-  "lastUpdated": "2026-11-13T18:50:00Z",
-  "notes": "Fix Director Suite mount hydration race, enforce atomic 8-table SQLite backup/restore and cascade deletes, harden updater/downloader/poster streams, and add release digest unit tests."
+  "version": "0.3.25",
+  "build": 46,
+  "lastUpdated": "2026-11-13T19:40:00Z",
+  "notes": "Update llama_engine.rs to llama-cpp-2 v0.1.161 LlamaVocab API so real-inference CI checks compile cleanly."
 }
