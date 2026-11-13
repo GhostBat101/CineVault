@@ -18,6 +18,7 @@ import {
   ModelStatusItem,
 } from '../types';
 import { isNewer } from '../utils/semver';
+import { extractSha256ForAsset } from '../utils/releaseDigest';
 import versionData from '../../version.json';
 
 export const isTauri = () => {
@@ -66,22 +67,120 @@ interface VaultBundle {
   suite: Record<string, unknown>;
 }
 
-function extractSha256ForAsset(assetName: string, releaseBody?: string | null): string {
-  if (!releaseBody) return '';
-  const escapedName = assetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const lineMatch = new RegExp(`([a-fA-F0-9]{64})\\s+\\*?${escapedName}`, 'i').exec(releaseBody);
-  if (lineMatch) return lineMatch[1].toLowerCase();
+interface SuiteMigrationBundle {
+  characters: Record<string, unknown[]>;
+  relationships: Record<string, unknown[]>;
+  beatSheets: Record<string, unknown>;
+  cinematographyCues: Record<string, unknown[]>;
+  loreNotes: Record<string, unknown[]>;
+}
 
-  const bsdMatch = new RegExp(`SHA256\\s*\\(${escapedName}\\)\\s*=\\s*([a-fA-F0-9]{64})`, 'i').exec(releaseBody);
-  if (bsdMatch) return bsdMatch[1].toLowerCase();
+function createEmptyMigrationBundle(): SuiteMigrationBundle {
+  return {
+    characters: {},
+    relationships: {},
+    beatSheets: {},
+    cinematographyCues: {},
+    loreNotes: {},
+  };
+}
 
-  const reverseMatch = new RegExp(`${escapedName}\\s*[:=]\\s*([a-fA-F0-9]{64})`, 'i').exec(releaseBody);
-  if (reverseMatch) return reverseMatch[1].toLowerCase();
+function appendSuiteEntryToBundle(
+  bundle: SuiteMigrationBundle,
+  key: string,
+  parsedValue: unknown
+): number {
+  const nowIso = new Date().toISOString();
 
-  const genericMatch = /sha-?256[:\s=]+([a-fA-F0-9]{64})/i.exec(releaseBody);
-  if (genericMatch) return genericMatch[1].toLowerCase();
+  if (key.startsWith('cinevault_characters_') && Array.isArray(parsedValue) && parsedValue.length > 0) {
+    const mediaId = key.replace('cinevault_characters_', '');
+    bundle.characters[mediaId] = (parsedValue as Character[]).map((c) => ({
+      ...c,
+      mediaId,
+      createdAt: c.createdAt || nowIso,
+      updatedAt: c.updatedAt || nowIso,
+    }));
+    return parsedValue.length;
+  }
 
-  return '';
+  if (key.startsWith('cinevault_relationships_') && Array.isArray(parsedValue) && parsedValue.length > 0) {
+    const mediaId = key.replace('cinevault_relationships_', '');
+    bundle.relationships[mediaId] = (parsedValue as RelationshipLink[]).map((r, idx) => ({
+      id: (r as RelationshipLink & { id?: string }).id || `rel_${mediaId}_${r.sourceCharacterId}_${r.targetCharacterId}_${idx}`,
+      mediaId,
+      sourceCharacterId: r.sourceCharacterId,
+      targetCharacterId: r.targetCharacterId,
+      relationshipType: r.relationshipType,
+      tensionScore: r.tensionScore,
+      notes: r.notes || null,
+      createdAt: (r as RelationshipLink & { createdAt?: string }).createdAt || nowIso,
+    }));
+    return parsedValue.length;
+  }
+
+  if (
+    key.startsWith('cinevault_beats_') &&
+    parsedValue &&
+    typeof parsedValue === 'object' &&
+    Array.isArray((parsedValue as { beats?: unknown }).beats)
+  ) {
+    const mediaId = key.replace('cinevault_beats_', '');
+    const parsedObj = parsedValue as { framework?: string; beats: unknown[] };
+    bundle.beatSheets[mediaId] = {
+      id: `sheet_${mediaId}`,
+      mediaId,
+      framework: parsedObj.framework || 'save-the-cat',
+      title: `${mediaId} Beat Sheet`,
+      logline: null,
+      beatsJson: JSON.stringify(parsedObj.beats),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    return 1;
+  }
+
+  if (key.startsWith('cinevault_cinematography_') && Array.isArray(parsedValue) && parsedValue.length > 0) {
+    const mediaId = key.replace('cinevault_cinematography_', '');
+    bundle.cinematographyCues[mediaId] = (parsedValue as CinematographyCue[]).map((c, idx) => ({
+      id: c.id || `cue_${mediaId}_${idx + 1}`,
+      mediaId,
+      sceneTitle: c.sceneTitle,
+      dominantColor: c.colorPalette?.dominant || '#0a0a0f',
+      accentColor: c.colorPalette?.accent || '#d4af37',
+      shadowColor: c.colorPalette?.shadow || '#050508',
+      lightingStyle: c.lightingStyle || null,
+      lensChoice: c.lensChoice || null,
+      aspectRatio: c.aspectRatio || null,
+      audioNotes: c.audioThemeNotes || null,
+      createdAt: c.createdAt || nowIso,
+    }));
+    return parsedValue.length;
+  }
+
+  if (key.startsWith('cinevault_lore_notes_') && Array.isArray(parsedValue) && parsedValue.length > 0) {
+    const mediaId = key.replace('cinevault_lore_notes_', '');
+    bundle.loreNotes[mediaId] = (parsedValue as LoreNote[]).map((n, idx) => ({
+      ...n,
+      id: n.id || `lore_${mediaId}_${idx + 1}`,
+      mediaId,
+      createdAt: n.createdAt || nowIso,
+      updatedAt: nowIso,
+    }));
+    return parsedValue.length;
+  }
+
+  return 0;
+}
+
+function toMigrationPayload(bundle: SuiteMigrationBundle): Record<string, unknown> {
+  return {
+    characters: Object.keys(bundle.characters).length > 0 ? bundle.characters : undefined,
+    relationships: Object.keys(bundle.relationships).length > 0 ? bundle.relationships : undefined,
+    beatSheets: Object.keys(bundle.beatSheets).length > 0 ? bundle.beatSheets : undefined,
+    cinematographyCues:
+      Object.keys(bundle.cinematographyCues).length > 0 ? bundle.cinematographyCues : undefined,
+    loreNotes: Object.keys(bundle.loreNotes).length > 0 ? bundle.loreNotes : undefined,
+  };
 }
 
 function downloadJsonFile(content: string, filename: string): void {
@@ -255,11 +354,7 @@ export const api = {
     if (localStorage.getItem('cinevault_sqlite_migrated_v3') === 'true') {
       return 0;
     }
-    const characters: Record<string, any[]> = {};
-    const relationships: Record<string, any[]> = {};
-    const beatSheets: Record<string, any> = {};
-    const cinematographyCues: Record<string, any[]> = {};
-    const loreNotes: Record<string, any[]> = {};
+    const bundle = createEmptyMigrationBundle();
     let totalItems = 0;
 
     for (let i = 0; i < localStorage.length; i += 1) {
@@ -269,87 +364,7 @@ export const api = {
       if (!raw) continue;
 
       try {
-        if (key.startsWith('cinevault_characters_')) {
-          const mediaId = key.replace('cinevault_characters_', '');
-          const items = JSON.parse(raw) as Character[];
-          if (Array.isArray(items) && items.length > 0) {
-            characters[mediaId] = items.map((c) => ({
-              ...c,
-              mediaId,
-              createdAt: c.createdAt || new Date().toISOString(),
-              updatedAt: c.updatedAt || new Date().toISOString(),
-            }));
-            totalItems += items.length;
-          }
-        } else if (key.startsWith('cinevault_relationships_')) {
-          const mediaId = key.replace('cinevault_relationships_', '');
-          const items = JSON.parse(raw) as RelationshipLink[];
-          if (Array.isArray(items) && items.length > 0) {
-            const nowIso = new Date().toISOString();
-            relationships[mediaId] = items.map((r, idx) => ({
-              id: (r as any).id || `rel_${mediaId}_${r.sourceCharacterId}_${r.targetCharacterId}_${idx}`,
-              mediaId,
-              sourceCharacterId: r.sourceCharacterId,
-              targetCharacterId: r.targetCharacterId,
-              relationshipType: r.relationshipType,
-              tensionScore: r.tensionScore,
-              notes: r.notes || null,
-              createdAt: (r as any).createdAt || nowIso,
-            }));
-            totalItems += items.length;
-          }
-        } else if (key.startsWith('cinevault_beats_')) {
-          const mediaId = key.replace('cinevault_beats_', '');
-          const parsed = JSON.parse(raw);
-          if (parsed && Array.isArray(parsed.beats)) {
-            const nowIso = new Date().toISOString();
-            beatSheets[mediaId] = {
-              id: `sheet_${mediaId}`,
-              mediaId,
-              framework: parsed.framework || 'save-the-cat',
-              title: `${mediaId} Beat Sheet`,
-              logline: null,
-              beatsJson: JSON.stringify(parsed.beats),
-              createdAt: nowIso,
-              updatedAt: nowIso,
-            };
-            totalItems += 1;
-          }
-        } else if (key.startsWith('cinevault_cinematography_')) {
-          const mediaId = key.replace('cinevault_cinematography_', '');
-          const items = JSON.parse(raw) as CinematographyCue[];
-          if (Array.isArray(items) && items.length > 0) {
-            const nowIso = new Date().toISOString();
-            cinematographyCues[mediaId] = items.map((c, idx) => ({
-              id: c.id || `cue_${mediaId}_${idx + 1}`,
-              mediaId,
-              sceneTitle: c.sceneTitle,
-              dominantColor: c.colorPalette?.dominant || '#0a0a0f',
-              accentColor: c.colorPalette?.accent || '#d4af37',
-              shadowColor: c.colorPalette?.shadow || '#050508',
-              lightingStyle: c.lightingStyle || null,
-              lensChoice: c.lensChoice || null,
-              aspectRatio: c.aspectRatio || null,
-              audioNotes: c.audioThemeNotes || null,
-              createdAt: c.createdAt || nowIso,
-            }));
-            totalItems += items.length;
-          }
-        } else if (key.startsWith('cinevault_lore_notes_')) {
-          const mediaId = key.replace('cinevault_lore_notes_', '');
-          const items = JSON.parse(raw) as LoreNote[];
-          if (Array.isArray(items) && items.length > 0) {
-            const nowIso = new Date().toISOString();
-            loreNotes[mediaId] = items.map((n, idx) => ({
-              ...n,
-              id: n.id || `lore_${mediaId}_${idx + 1}`,
-              mediaId,
-              createdAt: n.createdAt || nowIso,
-              updatedAt: nowIso,
-            }));
-            totalItems += items.length;
-          }
-        }
+        totalItems += appendSuiteEntryToBundle(bundle, key, JSON.parse(raw));
       } catch {
         continue;
       }
@@ -358,13 +373,7 @@ export const api = {
     if (totalItems > 0) {
       try {
         await tauriInvoke<number>('migrate_suite_from_local_storage', {
-          bundle: {
-            characters: Object.keys(characters).length > 0 ? characters : undefined,
-            relationships: Object.keys(relationships).length > 0 ? relationships : undefined,
-            beatSheets: Object.keys(beatSheets).length > 0 ? beatSheets : undefined,
-            cinematographyCues: Object.keys(cinematographyCues).length > 0 ? cinematographyCues : undefined,
-            loreNotes: Object.keys(loreNotes).length > 0 ? loreNotes : undefined,
-          },
+          bundle: toMigrationPayload(bundle),
         });
       } catch (e) {
         console.error('[Auto-Migrate Error]', e);
@@ -459,18 +468,20 @@ export const api = {
       expectedSha256,
     }),
 
-  appMinimize: () => tauriInvoke<void>('app_minimize'),
-  appMaximize: () => tauriInvoke<void>('app_maximize'),
-  appClose: () => tauriInvoke<void>('app_close'),
   minimizeWindow: () => tauriInvoke<void>('app_minimize'),
   maximizeWindow: () => tauriInvoke<void>('app_maximize'),
   closeWindow: () => tauriInvoke<void>('app_close'),
 };
 
 export async function exportVaultBundle(): Promise<void> {
-  const mediaList = await api.getAllMedia();
-  const suiteData: Record<string, unknown> = {};
+  const dateStr = new Date().toISOString().slice(0, 10);
+  if (isTauri()) {
+    const json = await api.exportDatabaseJson();
+    downloadJsonFile(json, `cinevault-vault-backup-${dateStr}.json`);
+    return;
+  }
 
+  const suiteData: Record<string, unknown> = {};
   for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i);
     if (!key || !SUITE_KEY_PREFIX.test(key)) continue;
@@ -486,13 +497,10 @@ export async function exportVaultBundle(): Promise<void> {
   const bundle: VaultBundle = {
     format: 'cinevault-vault-bundle',
     version: 1,
-    vault: mediaList,
+    vault: [],
     suite: suiteData,
   };
-
-  const json = JSON.stringify(bundle, null, 2);
-  const dateStr = new Date().toISOString().slice(0, 10);
-  downloadJsonFile(json, `cinevault-vault-backup-${dateStr}.json`);
+  downloadJsonFile(JSON.stringify(bundle, null, 2), `cinevault-vault-backup-${dateStr}.json`);
 }
 
 export async function importVaultBundle(
@@ -505,11 +513,39 @@ export async function importVaultBundle(
     throw new Error('Invalid JSON file: parsing failed.');
   }
 
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    (parsed as { format?: string }).format !== 'cinevault-vault-bundle'
-  ) {
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Invalid CineVault backup file: root must be a JSON object.');
+  }
+
+  const candidate = parsed as {
+    sha256Checksum?: unknown;
+    format?: unknown;
+    media?: unknown;
+    characters?: unknown;
+    relationships?: unknown;
+    beatSheets?: unknown;
+    cinematographyCues?: unknown;
+    loreNotes?: unknown;
+    storyArcs?: unknown;
+    timelineEvents?: unknown;
+  };
+
+  if (typeof candidate.sha256Checksum === 'string' && Array.isArray(candidate.media)) {
+    await api.importDatabaseJson(jsonText);
+    const mediaCount = candidate.media.length;
+    const suiteKeyCount = [
+      candidate.characters,
+      candidate.relationships,
+      candidate.beatSheets,
+      candidate.cinematographyCues,
+      candidate.loreNotes,
+      candidate.storyArcs,
+      candidate.timelineEvents,
+    ].reduce<number>((acc, list) => acc + (Array.isArray(list) ? list.length : 0), 0);
+    return { mediaCount, suiteKeyCount, suiteKeys: suiteKeyCount };
+  }
+
+  if (candidate.format !== 'cinevault-vault-bundle') {
     throw new Error(
       'Invalid CineVault bundle: missing or incorrect "format" identifier.'
     );
@@ -528,13 +564,30 @@ export async function importVaultBundle(
   }
 
   let suiteKeyCount = 0;
+  const migrationBundle = createEmptyMigrationBundle();
+  let migratedItems = 0;
+
   if (bundle.suite && typeof bundle.suite === 'object') {
     for (const [key, val] of Object.entries(bundle.suite)) {
       if (!SUITE_KEY_PREFIX.test(key)) continue;
       const strVal = typeof val === 'string' ? val : JSON.stringify(val);
       localStorage.setItem(key, strVal);
       suiteKeyCount += 1;
+
+      let parsedVal: unknown = val;
+      if (typeof val === 'string') {
+        try {
+          parsedVal = JSON.parse(val);
+        } catch {
+          parsedVal = null;
+        }
+      }
+      migratedItems += appendSuiteEntryToBundle(migrationBundle, key, parsedVal);
     }
+  }
+
+  if (isTauri() && migratedItems > 0) {
+    await api.migrateSuiteFromLocalStorage(toMigrationPayload(migrationBundle));
   }
 
   return { mediaCount, suiteKeyCount, suiteKeys: suiteKeyCount };
