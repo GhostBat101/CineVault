@@ -2,43 +2,42 @@
 //! Purpose: Downloads, streams, and verifies SHA-256 integrity for local AI models into the Model Vault.
 //! Communication Matrix: Invoked by commands::ai::download_ai_model; interfaces with tauri runtime for download progress events.
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tokio::fs::{self, File};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::logger::Logger;
 
-/// Filenames with a download currently running. Poison-tolerant lock:
-/// a panicking callback must never wedge every future download.
-/// Registration/unregistration happens ONLY via [`InFlightGuard`], whose
-/// Drop covers every exit path of
-/// [`ModelDownloader::download_gguf_model_inner`] by construction -
-/// returns, errors, panic unwinds, and cancelled futures included.
-///
-/// OnceLock indirection: `HashSet::new()` is not a `const fn` on stable Rust,
-/// so the set cannot live directly inside a `static Mutex`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadProgress {
+    pub model_id: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+    pub percentage: f32,
+    pub speed_mbps: f32,
+    pub is_completed: bool,
+    pub error: Option<String>,
+    pub attempt: u32,
+    pub max_attempts: u32,
+}
+
+struct InFlightGuard(String);
+
+pub struct ModelDownloader;
+
+const MAX_RETRIES: u32 = 5;
 static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-/// Lazily-initialized access to the in-flight download registry.
 fn in_flight_registry() -> &'static Mutex<HashSet<String>> {
     IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-/**
- * RAII registration in [`IN_FLIGHT`]: inserts `filename` on creation and
- * removes it on Drop. Because the guard is an ordinary local held across the
- * download awaits, ANY exit of the wrapper future - success, every Err
- * branch, retry exhaustion, a panicking callback, or the future simply being
- * cancelled at an await point - still runs the unregister.
- */
-struct InFlightGuard(String);
-
 impl InFlightGuard {
-    /// Insert `filename` into the registry; None when already in flight
-    /// (the caller must then reject with DOWNLOAD_IN_PROGRESS).
     fn register(filename: &str) -> Option<Self> {
         let mut in_flight = in_flight_registry()
             .lock()
@@ -58,61 +57,38 @@ impl Drop for InFlightGuard {
     }
 }
 
-/// Progress payload emitted through the `model_download_progress` event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DownloadProgress {
-    pub model_id: String,
-    pub downloaded_bytes: u64,
-    pub total_bytes: u64,
-    pub percentage: f32,
-    pub speed_mbps: f32,
-    pub is_completed: bool,
-    pub error: Option<String>,
-    pub attempt: u32,
-    pub max_attempts: u32,
-}
-
-/// Maximum retry attempts for a single model download.
-const MAX_RETRIES: u32 = 5;
-
-pub struct ModelDownloader;
-
 impl ModelDownloader {
-    /// Cheap connectivity probe used before any download starts.
-    ///
-    /// Three probes in escalation order: huggingface.co -> cloudflare
-    /// 1.1.1.1 -> google generate_204. A NEGATIVE answer never short-
-    /// circuits: HF 403s HEAD requests from bots, so a responding-but-
-    /// hostile edge must fall through to the next probe. Success criteria:
-    /// `is_success() || is_redirection()` for the first two (1.1.1.1
-    /// answers HEAD with a 301 redirect), exactly HTTP 204 for generate_204.
     pub async fn is_internet_connected() -> bool {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             .build();
 
-        if let Ok(client) = client {
-            if let Ok(resp) = client.head("https://huggingface.co").send().await {
-                if resp.status().is_success() || resp.status().is_redirection() {
-                    return true;
-                }
+        let Ok(client) = client else {
+            return false;
+        };
+
+        if let Ok(resp) = client.head("https://huggingface.co").send().await {
+            if resp.status().is_success() || resp.status().is_redirection() {
+                return true;
             }
         }
+
+        if let Ok(resp) = client.head("https://1.1.1.1").send().await {
+            if resp.status().is_success() || resp.status().is_redirection() {
+                return true;
+            }
+        }
+
+        if let Ok(resp) = client.get("https://www.google.com/generate_204").send().await {
+            if resp.status() == reqwest::StatusCode::NO_CONTENT || resp.status().is_success() {
+                return true;
+            }
+        }
+
         false
     }
 
-    /// Download `filename` from `download_url` into `dest_dir`, verifying it
-    /// against `expected_sha256`. Returns the final verified path.
-    ///
-    /// Thin concurrency guard around
-    /// [`ModelDownloader::download_gguf_model_inner`]: constructs an
-    /// [`InFlightGuard`] right after the duplicate check; the guard then
-    /// lives for the whole function and unregisters on Drop, covering
-    /// success, every Err branch, retry exhaustion, and cancellation of the
-    /// future at any await point. A concurrent duplicate call is rejected
-    /// up front with `DOWNLOAD_IN_PROGRESS`.
     pub async fn download_gguf_model<F>(
         download_url: &str,
         dest_dir: &Path,
@@ -138,10 +114,6 @@ impl ModelDownloader {
         .await
     }
 
-    /// The full download pipeline previously living in
-    /// [`ModelDownloader::download_gguf_model`]: connectivity check,
-    /// already-verified fast path, resilient retry loop with streamed
-    /// SHA-256 hashing, and atomic promote of the verified `.part` file.
     async fn download_gguf_model_inner<F>(
         download_url: &str,
         dest_dir: &Path,
@@ -152,7 +124,6 @@ impl ModelDownloader {
     where
         F: Fn(DownloadProgress) + Send + Sync + 'static,
     {
-        // 1. Check Internet Connectivity First
         Logger::info(&format!("Checking internet connection before downloading model: {}", filename));
         if !Self::is_internet_connected().await {
             let err_msg = "OFFLINE_NO_INTERNET: No active internet connection detected. Please connect to the internet to download AI model weights.".to_string();
@@ -167,7 +138,6 @@ impl ModelDownloader {
         let target_path = dest_dir.join(filename);
         let part_path = dest_dir.join(format!("{}.part", filename));
 
-        // Already-downloaded files are re-verified before being trusted.
         if target_path.exists() {
             Logger::info(&format!("Model file {:?} already exists on disk. Verifying SHA-256 integrity...", target_path));
             if Self::verify_file_sha256(&target_path, expected_sha256).await {
@@ -189,15 +159,11 @@ impl ModelDownloader {
             let _ = fs::remove_file(&target_path).await;
         }
 
-        // 2. Resilient Download Loop (Up to MAX_RETRIES attempts)
         let mut last_error = String::from("Unknown error");
 
         for attempt in 1..=MAX_RETRIES {
             Logger::info(&format!("Download attempt {}/{} for {}...", attempt, MAX_RETRIES, filename));
 
-            // Re-check the completed-file fast path on EVERY attempt: a
-            // concurrent download (first-use auto-fetch + manual click) may
-            // have landed a verified file while we were retrying.
             if target_path.exists() && Self::verify_file_sha256(&target_path, expected_sha256).await {
                 Logger::info(&format!("Model file appeared mid-retry and verifies - reusing {:?}.", target_path));
                 progress_callback(DownloadProgress {
@@ -217,7 +183,8 @@ impl ModelDownloader {
             let client = match reqwest::Client::builder()
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
                 .connect_timeout(std::time::Duration::from_secs(15))
-                .tcp_keepalive(Some(std::time::Duration::from_secs(15)))
+                .read_timeout(std::time::Duration::from_secs(30))
+                .tcp_keepalive(std::time::Duration::from_secs(15))
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()
             {
@@ -252,7 +219,6 @@ impl ModelDownloader {
             let total_bytes = response.content_length().unwrap_or(0);
             let mut downloaded_bytes = 0u64;
 
-            // Stream into the .part file - never directly onto the final name.
             let file_result = File::create(&part_path).await;
             let mut file = match file_result {
                 Ok(f) => f,
@@ -263,9 +229,8 @@ impl ModelDownloader {
                 }
             };
 
-            let mut hasher = Sha256::new(); // streamed hashing while writing
+            let mut hasher = Sha256::new();
             let mut stream = response.bytes_stream();
-            use futures_util::StreamExt;
             let start_time = std::time::Instant::now();
             let mut last_emit_time = std::time::Instant::now();
             let mut last_log_time = std::time::Instant::now();
@@ -290,7 +255,6 @@ impl ModelDownloader {
                             0.0
                         };
 
-                        // Log to file periodically every 5 seconds
                         if last_log_time.elapsed().as_secs() >= 5 {
                             Logger::info(&format!(
                                 "Streaming {}: {:.1}% ({:.1} MB / {:.1} MB) @ {:.1} MB/s",
@@ -303,7 +267,6 @@ impl ModelDownloader {
                             last_log_time = std::time::Instant::now();
                         }
 
-                        // Throttle IPC emission to ~12 updates per second (80ms).
                         if last_emit_time.elapsed().as_millis() >= 80 {
                             progress_callback(DownloadProgress {
                                 model_id: filename.to_string(),
@@ -329,19 +292,16 @@ impl ModelDownloader {
             }
 
             if stream_success && downloaded_bytes > 0 {
-                // Flush failures go through the retry path like any other
-                // error - returning early would skip remaining attempts AND
-                // orphan the .part file.
                 if let Err(e) = file.flush().await {
                     last_error = format!("Flush error: {}", e);
                     Logger::error(&last_error);
+                    drop(file);
                     let _ = fs::remove_file(&part_path).await;
                     tokio::time::sleep(std::time::Duration::from_millis(attempt as u64 * 1500)).await;
                     continue;
                 }
                 drop(file);
 
-                // FAIL-CLOSED verification of freshly downloaded bytes.
                 let hash_hex = format!("{:x}", hasher.finalize());
                 let hash_matches = expected_sha256.is_empty()
                     || hash_hex.eq_ignore_ascii_case(expected_sha256);
@@ -353,10 +313,9 @@ impl ModelDownloader {
                     );
                     Logger::error(&last_error);
                     let _ = fs::remove_file(&part_path).await;
-                    continue; // retry from scratch; corrupted body never lands
+                    continue;
                 }
 
-                // Atomic promote: verified .part -> final model path.
                 if let Err(e) = fs::rename(&part_path, &target_path).await {
                     last_error = format!("Failed to finalize model file: {}", e);
                     Logger::error(&last_error);
@@ -379,7 +338,7 @@ impl ModelDownloader {
                 return Ok(target_path);
             }
 
-            // Clean up the partial file before retrying.
+            drop(file);
             let _ = fs::remove_file(&part_path).await;
             tokio::time::sleep(std::time::Duration::from_millis(attempt as u64 * 1500)).await;
         }
@@ -392,12 +351,10 @@ impl ModelDownloader {
         Err(fatal_err)
     }
 
-    /// Streamed SHA-256 verification (constant memory even for multi-GB models).
     pub async fn verify_file_sha256(path: &Path, expected_hash: &str) -> bool {
         if expected_hash.is_empty() {
             return true;
         }
-        use tokio::io::AsyncReadExt;
 
         let mut file = match File::open(path).await {
             Ok(f) => f,
@@ -405,10 +362,10 @@ impl ModelDownloader {
         };
 
         let mut hasher = Sha256::new();
-        let mut buffer = vec![0u8; 1024 * 1024]; // 1 MiB chunks
+        let mut buffer = vec![0u8; 1024 * 1024];
         loop {
             match file.read(&mut buffer).await {
-                Ok(0) => break, // EOF
+                Ok(0) => break,
                 Ok(read) => hasher.update(&buffer[..read]),
                 Err(_) => return false,
             }
