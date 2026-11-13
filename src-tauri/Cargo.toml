@@ -1,6 +1,6 @@
 [package]
 name = "cinevault-core"
-version = "0.3.23"
+version = "0.3.24"
 description = "CineVault Native Desktop Host & Local AI Narrative Engine"
 authors = ["GhostBat101"]
 edition = "2021"
