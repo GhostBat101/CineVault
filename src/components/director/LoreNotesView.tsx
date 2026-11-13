@@ -11,6 +11,7 @@ import { Markdown } from '../common/Markdown';
 import { Plus, Sparkles, BookOpen, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { useAISummary } from '../../hooks/useAISummary';
 import { api, isTauri } from '../../services/api';
+import { toast } from '../common/Toast';
 
 interface LoreNotesViewProps {
   media: Media | null;
@@ -25,6 +26,7 @@ const CATEGORIES = [
 ] as const;
 
 const LORE_CONTEXT_BUDGET = 4000;
+const SAVE_DEBOUNCE_MS = 300;
 
 function loadJsonArray<T>(key: string): T[] {
   try {
@@ -36,10 +38,11 @@ function loadJsonArray<T>(key: string): T[] {
 }
 
 export const LoreNotesView: React.FC<LoreNotesViewProps> = ({ media }) => {
-  const storageKey = media ? `cinevault_lore_notes_${media.id}` : 'cinevault_lore_notes_global';
+  const mediaId = media?.id ?? null;
+  const storageKey = mediaId ? `cinevault_lore_notes_${mediaId}` : 'cinevault_lore_notes_global';
 
   const [notes, setNotes] = useState<LoreNote[]>(() => loadJsonArray<LoreNote>(storageKey));
-  const loadedKeyRef = useRef<string>(storageKey);
+  const loadedKeyRef = useRef<string | null>(null);
 
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isAddNoteOpen, setIsAddNoteOpen] = useState(false);
@@ -61,10 +64,11 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({ media }) => {
 
   useEffect(() => {
     let isCurrent = true;
+    loadedKeyRef.current = null;
     const loadData = async () => {
-      if (media && isTauri()) {
+      if (mediaId && isTauri()) {
         try {
-          const dbNotes = await api.getLoreNotes(media.id);
+          const dbNotes = await api.getLoreNotes(mediaId);
           if (isCurrent && Array.isArray(dbNotes) && dbNotes.length > 0) {
             setNotes(dbNotes);
             loadedKeyRef.current = storageKey;
@@ -82,7 +86,7 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({ media }) => {
     return () => {
       isCurrent = false;
     };
-  }, [storageKey, media]);
+  }, [storageKey, mediaId]);
 
   useEffect(() => {
     if (loadedKeyRef.current !== storageKey) return;
@@ -91,10 +95,14 @@ export const LoreNotesView: React.FC<LoreNotesViewProps> = ({ media }) => {
     } catch (e) {
       console.warn('Failed to persist lore notes:', e);
     }
-    if (media && isTauri()) {
-      api.saveLoreNotes(media.id, notes).catch(() => {});
-    }
-  }, [notes, storageKey, media]);
+    if (!mediaId || !isTauri()) return;
+    const timer = window.setTimeout(() => {
+      api.saveLoreNotes(mediaId, notes).catch((err) => {
+        toast.error(err instanceof Error ? err.message : String(err), 'Failed to save lore notes');
+      });
+    }, SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [notes, storageKey, mediaId]);
 
   const filteredNotes =
     selectedCategory === 'all' ? notes : notes.filter((n) => n.category === selectedCategory);
