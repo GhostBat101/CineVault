@@ -9,6 +9,7 @@ import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 import { api, isTauri } from '../../services/api';
 import { Camera, Plus, Pencil, Trash2, Palette } from 'lucide-react';
+import { toast } from '../common/Toast';
 
 interface CinematographyCuesViewProps {
   media: Media | null;
@@ -20,6 +21,8 @@ interface PalettePreset {
   accent: string;
   shadow: string;
 }
+
+const SAVE_DEBOUNCE_MS = 300;
 
 const ASPECT_RATIOS = [
   '2.39:1 (Anamorphic Widescreen)',
@@ -66,7 +69,8 @@ function loadStoredCues(key: string): CinematographyCue[] {
 }
 
 export const CinematographyCuesView: React.FC<CinematographyCuesViewProps> = ({ media }) => {
-  const storageKey = media ? `cinevault_cinematography_${media.id}` : 'cinevault_cinematography_global';
+  const mediaId = media?.id ?? null;
+  const storageKey = mediaId ? `cinevault_cinematography_${mediaId}` : 'cinevault_cinematography_global';
 
   const [cues, setCues] = useState<CinematographyCue[]>(() => loadStoredCues(storageKey));
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -81,14 +85,15 @@ export const CinematographyCuesView: React.FC<CinematographyCuesViewProps> = ({ 
   const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[0]);
   const [audioThemeNotes, setAudioThemeNotes] = useState('');
 
-  const loadedKeyRef = useRef<string>(storageKey);
+  const loadedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isCurrent = true;
+    loadedKeyRef.current = null;
     const loadData = async () => {
-      if (media && isTauri()) {
+      if (mediaId && isTauri()) {
         try {
-          const dbCues = await api.getCinematographyCues(media.id);
+          const dbCues = await api.getCinematographyCues(mediaId);
           if (isCurrent && Array.isArray(dbCues) && dbCues.length > 0) {
             setCues(dbCues);
             loadedKeyRef.current = storageKey;
@@ -106,7 +111,7 @@ export const CinematographyCuesView: React.FC<CinematographyCuesViewProps> = ({ 
     return () => {
       isCurrent = false;
     };
-  }, [media, storageKey]);
+  }, [mediaId, storageKey]);
 
   useEffect(() => {
     if (loadedKeyRef.current !== storageKey) return;
@@ -115,10 +120,14 @@ export const CinematographyCuesView: React.FC<CinematographyCuesViewProps> = ({ 
     } catch {
     }
 
-    if (media && isTauri()) {
-      api.saveCinematographyCues(media.id, cues).catch(() => {});
-    }
-  }, [cues, media, storageKey]);
+    if (!mediaId || !isTauri()) return;
+    const timer = window.setTimeout(() => {
+      api.saveCinematographyCues(mediaId, cues).catch((err) => {
+        toast.error(err instanceof Error ? err.message : String(err), 'Failed to save cinematography cues');
+      });
+    }, SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [cues, mediaId, storageKey]);
 
   const handleOpenCreateModal = () => {
     setEditingCue(null);
