@@ -11,6 +11,15 @@ pub use crate::db::migrations::*;
 pub use crate::db::models::*;
 
 const EXPORT_FORMAT_VERSION: &str = "2.0.0";
+const MEDIA_CHILD_TABLES: [&str; 7] = [
+    "characters",
+    "character_relationships",
+    "beat_sheets",
+    "cinematography_cues",
+    "lore_notes",
+    "story_arcs",
+    "timeline_events",
+];
 
 pub struct Repository {
     pub conn: Mutex<Connection>,
@@ -184,8 +193,15 @@ impl Repository {
     }
 
     pub fn delete_media(&self, id: &str) -> Result<usize> {
-        let conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        conn.execute("DELETE FROM media WHERE id = ?1", params![id])
+        let mut conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tx = conn.transaction()?;
+        for table in MEDIA_CHILD_TABLES {
+            let sql = format!("DELETE FROM {table} WHERE media_id = ?1");
+            tx.execute(&sql, params![id])?;
+        }
+        let removed = tx.execute("DELETE FROM media WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(removed)
     }
 
     pub fn get_app_settings_json(&self) -> Result<Option<String>> {
@@ -219,24 +235,17 @@ impl Repository {
             }
         };
 
-        let merged = match existing
+        let parsed_existing = existing
             .as_deref()
-            .map(|raw| serde_json::from_str::<serde_json::Value>(raw))
-        {
-            Some(Ok(serde_json::Value::Object(old)))
-                if matches!(incoming, serde_json::Value::Object(_)) =>
-            {
-                if let serde_json::Value::Object(new) = incoming {
-                    let mut merged_map = old;
-                    for (key, value) in new {
-                        merged_map.insert(key, value);
-                    }
-                    serde_json::Value::Object(merged_map)
-                } else {
-                    unreachable!()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
+        let merged = match (parsed_existing, incoming) {
+            (Some(serde_json::Value::Object(mut old)), serde_json::Value::Object(new)) => {
+                for (key, value) in new {
+                    old.insert(key, value);
                 }
+                serde_json::Value::Object(old)
             }
-            _ => incoming,
+            (_, incoming_obj) => incoming_obj,
         };
 
         let serialized = serde_json::to_string(&merged)
@@ -284,10 +293,7 @@ impl Repository {
         Ok(export_data)
     }
 
-    pub fn import_media_transactional(&self, records: &[MediaRecord]) -> Result<ImportReport> {
-        let mut conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction()?;
-
+    fn upsert_media_in_tx(tx: &rusqlite::Transaction<'_>, records: &[MediaRecord]) -> Result<ImportReport> {
         let mut imported: usize = 0;
         let mut failed: usize = 0;
         let mut first_error: Option<String> = None;
@@ -385,7 +391,6 @@ impl Repository {
             )));
         }
 
-        tx.commit()?;
         Ok(ImportReport {
             imported_media: imported,
             failed_rows: 0,
@@ -393,66 +398,149 @@ impl Repository {
         })
     }
 
-    pub fn import_full_database_transactional(&self, doc: &FullDatabaseExport) -> Result<ImportReport> {
-        let media_report = self.import_media_transactional(&doc.media)?;
+    pub fn import_media_transactional(&self, records: &[MediaRecord]) -> Result<ImportReport> {
+        let mut conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tx = conn.transaction()?;
+        let report = Self::upsert_media_in_tx(&tx, records)?;
+        tx.commit()?;
+        Ok(report)
+    }
 
-        for c in &doc.characters {
-            let conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let _ = conn.execute(
+    pub fn import_full_database_transactional(&self, doc: &FullDatabaseExport) -> Result<ImportReport> {
+        let mut conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tx = conn.transaction()?;
+
+        let media_report = Self::upsert_media_in_tx(&tx, &doc.media)?;
+
+        {
+            let mut stmt = tx.prepare(
                 "INSERT INTO characters (id, media_id, name, actor_name, role_type, motivation, secret_backstory, avatar_url, notes, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(id) DO UPDATE SET
                      media_id = excluded.media_id, name = excluded.name, actor_name = excluded.actor_name,
                      role_type = excluded.role_type, motivation = excluded.motivation, secret_backstory = excluded.secret_backstory,
-                     avatar_url = excluded.avatar_url, notes = excluded.notes, updated_at = excluded.updated_at",
-                params![c.id, c.media_id, c.name, c.actor_name, c.role_type, c.motivation, c.secret_backstory, c.avatar_url, c.notes, c.created_at, c.updated_at]
-            );
+                     avatar_url = excluded.avatar_url, notes = excluded.notes, updated_at = excluded.updated_at"
+            )?;
+            for c in &doc.characters {
+                stmt.execute(params![
+                    c.id, c.media_id, c.name, c.actor_name, c.role_type, c.motivation,
+                    c.secret_backstory, c.avatar_url, c.notes, c.created_at, c.updated_at
+                ])?;
+            }
         }
 
-        for r in &doc.relationships {
-            let conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let _ = conn.execute(
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO story_arcs (id, media_id, parent_arc_id, title, arc_type, description, order_index, is_resolved, resolution_notes, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(id) DO UPDATE SET
+                     media_id = excluded.media_id, parent_arc_id = excluded.parent_arc_id, title = excluded.title,
+                     arc_type = excluded.arc_type, description = excluded.description, order_index = excluded.order_index,
+                     is_resolved = excluded.is_resolved, resolution_notes = excluded.resolution_notes, updated_at = excluded.updated_at"
+            )?;
+            for arc in &doc.story_arcs {
+                stmt.execute(params![
+                    arc.id, arc.media_id, arc.parent_arc_id, arc.title, arc.arc_type, arc.description,
+                    arc.order_index, arc.is_resolved as i64, arc.resolution_notes, arc.created_at, arc.updated_at
+                ])?;
+            }
+        }
+
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO beat_sheets (id, media_id, framework, title, logline, beats_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(id) DO UPDATE SET
+                     media_id = excluded.media_id, framework = excluded.framework, title = excluded.title,
+                     logline = excluded.logline, beats_json = excluded.beats_json, updated_at = excluded.updated_at"
+            )?;
+            let now = iso_utc_now();
+            for b in &doc.beat_sheets {
+                let id = if b.id.trim().is_empty() {
+                    format!("sheet_{}", b.media_id)
+                } else {
+                    b.id.clone()
+                };
+                let created_at = if b.created_at.trim().is_empty() { &now } else { &b.created_at };
+                let updated_at = if b.updated_at.trim().is_empty() { &now } else { &b.updated_at };
+                stmt.execute(params![
+                    id, b.media_id, b.framework, b.title, b.logline, b.beats_json, created_at, updated_at
+                ])?;
+            }
+        }
+
+        {
+            let mut stmt = tx.prepare(
                 "INSERT INTO character_relationships (id, media_id, source_character_id, target_character_id, relationship_type, tension_score, notes, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET
                      media_id = excluded.media_id, source_character_id = excluded.source_character_id,
                      target_character_id = excluded.target_character_id, relationship_type = excluded.relationship_type,
-                     tension_score = excluded.tension_score, notes = excluded.notes",
-                params![r.id, r.media_id, r.source_character_id, r.target_character_id, r.relationship_type, r.tension_score, r.notes, r.created_at]
-            );
+                     tension_score = excluded.tension_score, notes = excluded.notes"
+            )?;
+            for r in &doc.relationships {
+                stmt.execute(params![
+                    r.id, r.media_id, r.source_character_id, r.target_character_id,
+                    r.relationship_type, r.tension_score, r.notes, r.created_at
+                ])?;
+            }
         }
 
-        for b in &doc.beat_sheets {
-            let _ = self.save_beat_sheet_record(b);
-        }
-
-        for cue in &doc.cinematography_cues {
-            let conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let _ = conn.execute(
+        {
+            let mut stmt = tx.prepare(
                 "INSERT INTO cinematography_cues (id, media_id, scene_title, dominant_color, accent_color, shadow_color, lighting_style, lens_choice, aspect_ratio, audio_notes, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(id) DO UPDATE SET
                      media_id = excluded.media_id, scene_title = excluded.scene_title, dominant_color = excluded.dominant_color,
                      accent_color = excluded.accent_color, shadow_color = excluded.shadow_color, lighting_style = excluded.lighting_style,
-                     lens_choice = excluded.lens_choice, aspect_ratio = excluded.aspect_ratio, audio_notes = excluded.audio_notes",
-                params![cue.id, cue.media_id, cue.scene_title, cue.dominant_color, cue.accent_color, cue.shadow_color, cue.lighting_style, cue.lens_choice, cue.aspect_ratio, cue.audio_notes, cue.created_at]
-            );
+                     lens_choice = excluded.lens_choice, aspect_ratio = excluded.aspect_ratio, audio_notes = excluded.audio_notes"
+            )?;
+            for cue in &doc.cinematography_cues {
+                stmt.execute(params![
+                    cue.id, cue.media_id, cue.scene_title, cue.dominant_color, cue.accent_color,
+                    cue.shadow_color, cue.lighting_style, cue.lens_choice, cue.aspect_ratio, cue.audio_notes, cue.created_at
+                ])?;
+            }
         }
 
-        for n in &doc.lore_notes {
-            let conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let tags_json = serde_json::to_string(&n.tags).unwrap_or_else(|_| "[]".to_string());
-            let _ = conn.execute(
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO timeline_events (id, media_id, title, chronological_order, in_universe_timestamp, description, impact_level, involved_character_ids, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(id) DO UPDATE SET
+                     media_id = excluded.media_id, title = excluded.title, chronological_order = excluded.chronological_order,
+                     in_universe_timestamp = excluded.in_universe_timestamp, description = excluded.description,
+                     impact_level = excluded.impact_level, involved_character_ids = excluded.involved_character_ids"
+            )?;
+            for ev in &doc.timeline_events {
+                let involved_json =
+                    serde_json::to_string(&ev.involved_character_ids).unwrap_or_else(|_| "[]".to_string());
+                stmt.execute(params![
+                    ev.id, ev.media_id, ev.title, ev.chronological_order, ev.in_universe_timestamp,
+                    ev.description, ev.impact_level, involved_json, ev.created_at
+                ])?;
+            }
+        }
+
+        {
+            let mut stmt = tx.prepare(
                 "INSERT INTO lore_notes (id, media_id, character_id, arc_id, category, title, content_markdown, tags, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(id) DO UPDATE SET
                      media_id = excluded.media_id, character_id = excluded.character_id, arc_id = excluded.arc_id,
                      category = excluded.category, title = excluded.title, content_markdown = excluded.content_markdown,
-                     tags = excluded.tags, updated_at = excluded.updated_at",
-                params![n.id, n.media_id, n.character_id, n.arc_id, n.category, n.title, n.content_markdown, tags_json, n.created_at, n.updated_at]
-            );
+                     tags = excluded.tags, updated_at = excluded.updated_at"
+            )?;
+            for n in &doc.lore_notes {
+                let tags_json = serde_json::to_string(&n.tags).unwrap_or_else(|_| "[]".to_string());
+                stmt.execute(params![
+                    n.id, n.media_id, n.character_id, n.arc_id, n.category, n.title,
+                    n.content_markdown, tags_json, n.created_at, n.updated_at
+                ])?;
+            }
         }
 
+        tx.commit()?;
         Ok(media_report)
     }
 }
@@ -494,4 +582,195 @@ pub fn iso_utc_now() -> String {
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
         year, month, day, hour, minute, second, millis
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn memory_repo() -> Repository {
+        let conn = Connection::open_in_memory().expect("in-memory sqlite");
+        conn.execute_batch("PRAGMA foreign_keys = ON;").expect("fk pragma");
+        let repo = Repository {
+            conn: Mutex::new(conn),
+        };
+        repo.run_migrations().expect("migrations");
+        repo
+    }
+
+    fn sample_media(id: &str) -> MediaRecord {
+        MediaRecord {
+            id: id.to_string(),
+            imdb_id: Some(format!("tt{}", id.len())),
+            title: "Test Film".to_string(),
+            original_title: None,
+            year: Some(2024),
+            media_type: "movie".to_string(),
+            runtime_minutes: Some(120),
+            imdb_rating: Some(8.4),
+            poster_url: None,
+            poster_local_path: None,
+            synopsis: Some("Synopsis".to_string()),
+            genres: vec!["Sci-Fi".to_string()],
+            directors: vec!["Director".to_string()],
+            raw_scraped_json: None,
+            ai_summary: None,
+            ai_model_used: None,
+            user_status: "completed".to_string(),
+            user_rating: Some(9.0),
+            review_notes: None,
+            is_favorite: true,
+            watched_date: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn seed_all_tables(repo: &Repository, media_id: &str) {
+        repo.insert_media(&sample_media(media_id)).expect("insert media");
+        repo.save_characters_for_media(
+            media_id,
+            &[CharacterRecord {
+                id: format!("c1_{media_id}"),
+                media_id: media_id.to_string(),
+                name: "Lead".to_string(),
+                actor_name: None,
+                role_type: "protagonist".to_string(),
+                motivation: None,
+                secret_backstory: None,
+                avatar_url: None,
+                notes: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            }],
+        )
+        .expect("save characters");
+        repo.save_relationships_for_media(
+            media_id,
+            &[RelationshipRecord {
+                id: format!("r1_{media_id}"),
+                media_id: media_id.to_string(),
+                source_character_id: format!("c1_{media_id}"),
+                target_character_id: format!("c2_{media_id}"),
+                relationship_type: "Rival".to_string(),
+                tension_score: 8,
+                notes: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+            }],
+        )
+        .expect("save relationships");
+        repo.save_beat_sheet_record(&BeatSheetRecord {
+            id: format!("sheet_{media_id}"),
+            media_id: media_id.to_string(),
+            framework: "save-the-cat".to_string(),
+            title: "Sheet".to_string(),
+            logline: None,
+            beats_json: "[]".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        })
+        .expect("save beat sheet");
+        repo.save_cinematography_cues_for_media(
+            media_id,
+            &[CinematographyRecord {
+                id: format!("cue_{media_id}"),
+                media_id: media_id.to_string(),
+                scene_title: "Opening".to_string(),
+                dominant_color: Some("#000000".to_string()),
+                accent_color: Some("#ffffff".to_string()),
+                shadow_color: Some("#111111".to_string()),
+                lighting_style: None,
+                lens_choice: None,
+                aspect_ratio: None,
+                audio_notes: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+            }],
+        )
+        .expect("save cues");
+        repo.save_lore_notes_for_media(
+            media_id,
+            &[LoreNoteRecord {
+                id: format!("lore_{media_id}"),
+                media_id: media_id.to_string(),
+                character_id: None,
+                arc_id: None,
+                category: "World Rules".to_string(),
+                title: "Rule".to_string(),
+                content_markdown: "Text".to_string(),
+                tags: vec!["core".to_string()],
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            }],
+        )
+        .expect("save lore");
+
+        let conn = repo.conn.lock().unwrap_or_else(|p| p.into_inner());
+        conn.execute(
+            "INSERT INTO story_arcs (id, media_id, parent_arc_id, title, arc_type, description, order_index, is_resolved, resolution_notes, created_at, updated_at)
+             VALUES (?1, ?2, NULL, 'Arc A', 'main', NULL, 0, 1, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            params![format!("arc_{media_id}"), media_id],
+        )
+        .expect("insert story arc");
+        conn.execute(
+            "INSERT INTO timeline_events (id, media_id, title, chronological_order, in_universe_timestamp, description, impact_level, involved_character_ids, created_at)
+             VALUES (?1, ?2, 'Event 1', 1, NULL, NULL, 'major', '[\"c1\"]', '2026-01-01T00:00:00Z')",
+            params![format!("ev_{media_id}"), media_id],
+        )
+        .expect("insert timeline event");
+    }
+
+    #[test]
+    fn export_and_import_round_trips_all_eight_tables() {
+        let src = memory_repo();
+        seed_all_tables(&src, "m1");
+        let exported = src.export_full_database().expect("export");
+        assert!(verify_export_checksum(&exported));
+
+        let dst = memory_repo();
+        let report = dst.import_full_database_transactional(&exported).expect("import");
+        assert_eq!(report.imported_media, 1);
+
+        let re_exported = dst.export_full_database().expect("re-export");
+        assert_eq!(re_exported.media.len(), 1);
+        assert_eq!(re_exported.characters.len(), 1);
+        assert_eq!(re_exported.relationships.len(), 1);
+        assert_eq!(re_exported.beat_sheets.len(), 1);
+        assert_eq!(re_exported.cinematography_cues.len(), 1);
+        assert_eq!(re_exported.lore_notes.len(), 1);
+        assert_eq!(re_exported.story_arcs.len(), 1);
+        assert_eq!(re_exported.timeline_events.len(), 1);
+    }
+
+    #[test]
+    fn delete_media_cascades_all_child_tables() {
+        let repo = memory_repo();
+        seed_all_tables(&repo, "m_del");
+
+        let removed = repo.delete_media("m_del").expect("delete");
+        assert_eq!(removed, 1);
+
+        let exported = repo.export_full_database().expect("export");
+        assert!(exported.media.is_empty());
+        assert!(exported.characters.is_empty());
+        assert!(exported.relationships.is_empty());
+        assert!(exported.beat_sheets.is_empty());
+        assert!(exported.cinematography_cues.is_empty());
+        assert!(exported.lore_notes.is_empty());
+        assert!(exported.story_arcs.is_empty());
+        assert!(exported.timeline_events.is_empty());
+    }
+
+    #[test]
+    fn save_app_settings_merges_existing_keys() {
+        let repo = memory_repo();
+        repo.save_app_settings_json(r#"{"temperature":0.7,"omdbApiKey":"abc"}"#)
+            .expect("first save");
+        repo.save_app_settings_json(r#"{"inferenceMode":"cpu_only"}"#)
+            .expect("merge save");
+
+        let raw = repo.get_app_settings_json().expect("read").expect("present");
+        let val: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        assert_eq!(val["omdbApiKey"], "abc");
+        assert_eq!(val["inferenceMode"], "cpu_only");
+    }
 }
